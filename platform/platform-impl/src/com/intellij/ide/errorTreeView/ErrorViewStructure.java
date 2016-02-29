@@ -101,7 +101,7 @@ public class ErrorViewStructure extends AbstractTreeStructure {
       synchronized (myLock) {
         for (final ErrorTreeElementKind kind : ourMessagesOrder) {
           if (myCanHideWarnings) {
-            if (ErrorTreeElementKind.WARNING.equals(kind) || ErrorTreeElementKind.NOTE.equals(kind)) {
+            if (ErrorTreeElementKind.WARNING.equals(kind) || ErrorTreeElementKind.NOTE.equals(kind) || ErrorTreeElementKind.INFO.equals(kind)) {
               if (ErrorTreeViewConfiguration.getInstance(myProject).isHideWarnings()) {
                 continue;
               }
