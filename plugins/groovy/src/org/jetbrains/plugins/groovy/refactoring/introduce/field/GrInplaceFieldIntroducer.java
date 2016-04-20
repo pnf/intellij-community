@@ -97,9 +97,11 @@ public class GrInplaceFieldIntroducer extends GrAbstractInplaceIntroducer<GrIntr
 
   @Override
   protected GrVariable runRefactoring(GrIntroduceContext context, GrIntroduceFieldSettings settings, boolean processUsages) {
+    return refactorInWriteAction(() -> {
       GrIntroduceFieldProcessor processor = new GrIntroduceFieldProcessor(context, settings);
       return processUsages ? processor.run()
                            : processor.insertField((PsiClass)context.getScope()).getVariables()[0];
+    });
   }
 
   @Nullable
@@ -259,17 +261,17 @@ public class GrInplaceFieldIntroducer extends GrAbstractInplaceIntroducer<GrIntr
                                                                                boolean replaceAllOccurrences) {
     EnumSet<GrIntroduceFieldSettings.Init> result = EnumSet.noneOf(GrIntroduceFieldSettings.Init.class);
 
-    if (context.getExpression() != null ||
-        context.getVar() != null && context.getVar().getInitializerGroovy() != null ||
-        context.getStringPart() != null) {
-      result.add(GrIntroduceFieldSettings.Init.FIELD_DECLARATION);
-    }
-
     if (!(context.getScope() instanceof GroovyScriptClass || context.getScope() instanceof GroovyFileBase)) {
+      if (context.getExpression() != null ||
+          context.getVar() != null && context.getVar().getInitializerGroovy() != null ||
+          context.getStringPart() != null) {
+        result.add(GrIntroduceFieldSettings.Init.FIELD_DECLARATION);
+      }
       result.add(GrIntroduceFieldSettings.Init.CONSTRUCTOR);
     }
 
     PsiElement scope = context.getScope();
+    if (scope instanceof GroovyScriptClass) scope = scope.getContainingFile();
 
     if (replaceAllOccurrences || context.getExpression() != null) {
       PsiElement[] occurrences = replaceAllOccurrences ? context.getOccurrences() : new PsiElement[]{context.getExpression()};

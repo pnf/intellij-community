@@ -46,6 +46,7 @@ import com.intellij.openapi.util.Comparing;
 import com.intellij.openapi.util.Computable;
 import com.intellij.openapi.util.Disposer;
 import com.intellij.openapi.util.TextRange;
+import com.intellij.openapi.util.registry.Registry;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.psi.PsiFile;
@@ -54,6 +55,7 @@ import com.intellij.psi.search.GlobalSearchScope;
 import com.intellij.psi.util.PsiUtilCore;
 import com.intellij.testFramework.LightVirtualFile;
 import com.intellij.ui.components.JBScrollBar;
+import com.intellij.ui.components.JBScrollPane.Alignment;
 import com.intellij.util.DocumentUtil;
 import com.intellij.util.FileContentUtil;
 import com.intellij.util.ObjectUtils;
@@ -84,6 +86,8 @@ public class LanguageConsoleImpl extends ConsoleViewImpl implements LanguageCons
   private final Document myEditorDocument;
 
   private final JPanel myPanel = new JPanel(new MyLayout());
+  private final JScrollBar myScrollBar = new JBScrollBar(Adjustable.HORIZONTAL);
+
   @Nullable
   private String myPrompt = "> ";
   private ConsoleViewContentType myPromptAttributes = ConsoleViewContentType.USER_INPUT;
@@ -119,11 +123,16 @@ public class LanguageConsoleImpl extends ConsoleViewImpl implements LanguageCons
     EditorFactory editorFactory = EditorFactory.getInstance();
     myEditorDocument = helper.getDocument();
     myConsoleEditor = (EditorEx)editorFactory.createEditor(myEditorDocument, getProject());
+    myConsoleEditor.getScrollPane().getHorizontalScrollBar().setEnabled(false);
     myConsoleEditor.addFocusListener(myFocusListener);
     myCurrentEditor = myConsoleEditor;
     Document historyDocument = ((EditorFactoryImpl)editorFactory).createDocument(true);
     UndoUtil.disableUndoFor(historyDocument);
     myHistoryViewer = (EditorEx)editorFactory.createViewer(historyDocument, getProject());
+
+    myScrollBar.setOpaque(false);
+    myScrollBar.setModel(new MyModel(myScrollBar, myHistoryViewer, myConsoleEditor));
+    myScrollBar.putClientProperty(Alignment.class, Alignment.BOTTOM);
 
     myBusConnection = getProject().getMessageBus().connect();
     // action shortcuts are not yet registered
@@ -160,6 +169,8 @@ public class LanguageConsoleImpl extends ConsoleViewImpl implements LanguageCons
 
     myPanel.add(myHistoryViewer.getComponent());
     myPanel.add(myConsoleEditor.getComponent());
+    myPanel.add(myScrollBar);
+    myPanel.setBackground(myConsoleEditor.getBackgroundColor());
 
     DataManager.registerDataProvider(myPanel, this);
     setPromptInner(myPrompt);
@@ -169,26 +180,21 @@ public class LanguageConsoleImpl extends ConsoleViewImpl implements LanguageCons
     if (isConsoleEditorEnabled() == consoleEditorEnabled) {
       return;
     }
-
-    myPanel.removeAll();
-
     if (consoleEditorEnabled) {
       FileEditorManager.getInstance(getProject()).closeFile(getVirtualFile());
-
-      setHistoryScrollBarVisible(false);
-      myPanel.add(myHistoryViewer.getComponent());
-      myPanel.add(myConsoleEditor.getComponent());
-
       myCurrentEditor = myConsoleEditor;
     }
-    else {
-      setHistoryScrollBarVisible(true);
-      myPanel.add(myHistoryViewer.getComponent(), BorderLayout.CENTER);
-    }
+    setHistoryScrollBarVisible(!consoleEditorEnabled);
+    myScrollBar.setVisible(consoleEditorEnabled);
+    myConsoleEditor.getComponent().setVisible(consoleEditorEnabled);
   }
 
   private void setHistoryScrollBarVisible(boolean visible) {
     JScrollBar prev = myHistoryViewer.getScrollPane().getHorizontalScrollBar();
+    if (Registry.is("ide.scroll.new.layout")) {
+      prev.setEnabled(visible);
+      return;
+    }
     JScrollBar next;
     if (visible) {
       next = ((EmptyScrollBar)prev).original;
@@ -211,8 +217,6 @@ public class LanguageConsoleImpl extends ConsoleViewImpl implements LanguageCons
     myConsoleEditor.setHighlighter(
       EditorHighlighterFactory.getInstance().createEditorHighlighter(getVirtualFile(), myConsoleEditor.getColorsScheme(), getProject()));
 
-    myConsoleEditor.getScrollPane().getHorizontalScrollBar().setModel(
-      myHistoryViewer.getScrollPane().getHorizontalScrollBar().getModel());
     setHistoryScrollBarVisible(false);
 
     myHistoryViewer.getContentComponent().addKeyListener(new KeyAdapter() {
@@ -229,7 +233,7 @@ public class LanguageConsoleImpl extends ConsoleViewImpl implements LanguageCons
   }
 
   public final boolean isConsoleEditorEnabled() {
-    return myPanel.getComponentCount() > 1;
+    return myConsoleEditor.getComponent().isVisible();
   }
 
   @Nullable
@@ -610,28 +614,43 @@ public class LanguageConsoleImpl extends ConsoleViewImpl implements LanguageCons
       }
 
       final EditorEx history = myHistoryViewer;
-      final EditorEx input = componentCount == 2 ? myConsoleEditor : null;
+      final EditorEx input = isConsoleEditorEnabled() ? myConsoleEditor : null;
       if (input == null) {
         parent.getComponent(0).setBounds(parent.getBounds());
         return;
       }
 
       final Dimension panelSize = parent.getSize();
+      if (myScrollBar.isVisible()) {
+        Dimension size = myScrollBar.getPreferredSize();
+        if (panelSize.height < size.height) return;
+        panelSize.height -= size.height;
+        myScrollBar.setBounds(0, panelSize.height, panelSize.width, size.height);
+      }
       if (panelSize.getHeight() <= 0) {
         return;
       }
       final Dimension historySize = history.getContentSize();
       final Dimension inputSize = input.getContentSize();
 
-      int newInputHeight;
       // deal with width
-      final int width = Math.max(inputSize.width, historySize.width);
       if (isHistoryViewerForceAdditionalColumnsUsage()) {
         history.getSoftWrapModel().forceAdditionalColumnsUsage();
-        input.getSettings().setAdditionalColumnsCount(2 + (width - inputSize.width) / EditorUtil.getSpaceWidth(Font.PLAIN, input));
-        history.getSettings().setAdditionalColumnsCount(2 + (width - historySize.width) / EditorUtil.getSpaceWidth(Font.PLAIN, history));
+
+        int minAdditionalColumns = 2;
+        // calculate content size without additional columns except minimal amount
+        int historySpaceWidth = EditorUtil.getPlainSpaceWidth(history);
+        historySize.width += historySpaceWidth * (minAdditionalColumns - history.getSettings().getAdditionalColumnsCount());
+        // calculate content size without additional columns except minimal amount
+        int inputSpaceWidth = EditorUtil.getPlainSpaceWidth(input);
+        inputSize.width += inputSpaceWidth * (minAdditionalColumns - input.getSettings().getAdditionalColumnsCount());
+        // calculate additional columns according to the corresponding width
+        int max = Math.max(historySize.width, inputSize.width);
+        history.getSettings().setAdditionalColumnsCount(minAdditionalColumns + (max - historySize.width) / historySpaceWidth);
+        input.getSettings().setAdditionalColumnsCount(minAdditionalColumns + (max - inputSize.width) / inputSpaceWidth);
       }
 
+      int newInputHeight;
       // deal with height, WEB-11122 we cannot trust editor width - it could be 0 in case of soft wrap even if editor has text
       if (history.getDocument().getLineCount() == 0) {
         historySize.height = 0;
@@ -705,6 +724,65 @@ public class LanguageConsoleImpl extends ConsoleViewImpl implements LanguageCons
 
     @Override
     public void paint(Graphics g) {
+    }
+  }
+
+  private static final class MyModel extends DefaultBoundedRangeModel {
+    private volatile boolean myInternalChange;
+    private final JScrollBar myBar;
+    private final EditorEx myFirstEditor;
+    private final EditorEx mySecondEditor;
+    private int myFirstValue;
+    private int mySecondValue;
+
+    private MyModel(JScrollBar bar, EditorEx first, EditorEx second) {
+      myBar = bar;
+      myFirstEditor = first;
+      mySecondEditor = second;
+      addChangeListener(event -> onChange());
+      first.getScrollPane().getViewport().addChangeListener(event -> onUpdate(event.getSource()));
+      second.getScrollPane().getViewport().addChangeListener(event -> onUpdate(event.getSource()));
+    }
+
+    private boolean isInternal() {
+      return myInternalChange || !myFirstEditor.getComponent().isVisible() || !mySecondEditor.getComponent().isVisible();
+    }
+
+    private void onChange() {
+      if (isInternal()) return;
+      myInternalChange = true;
+      setValue(myFirstEditor.getScrollPane().getViewport(), getValue());
+      setValue(mySecondEditor.getScrollPane().getViewport(), getValue());
+      myInternalChange = false;
+    }
+
+    private void onUpdate(Object source) {
+      if (isInternal()) return;
+      JViewport first = myFirstEditor.getScrollPane().getViewport();
+      JViewport second = mySecondEditor.getScrollPane().getViewport();
+      int value = getValue();
+      if (source == first) {
+        Point position = first.getViewPosition();
+        if (position.x != myFirstValue) {
+          myFirstValue = value = position.x;
+        }
+      }
+      else {
+        Point position = second.getViewPosition();
+        if (position.x != mySecondValue) {
+          mySecondValue = value = position.x;
+        }
+      }
+      int ext = Math.min(first.getExtentSize().width, second.getExtentSize().width);
+      int max = Math.max(first.getViewSize().width, second.getViewSize().width);
+      setRangeProperties(value, ext, 0, max, false);
+      myBar.setEnabled(ext < max);
+    }
+
+    private static void setValue(JViewport viewport, int value) {
+      Point position = viewport.getViewPosition();
+      position.x = Math.max(0, Math.min(value, viewport.getViewSize().width - viewport.getExtentSize().width));
+      viewport.setViewPosition(position);
     }
   }
 }

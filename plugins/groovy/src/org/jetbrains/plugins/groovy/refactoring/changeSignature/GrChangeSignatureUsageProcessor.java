@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -110,15 +110,17 @@ public class GrChangeSignatureUsageProcessor implements ChangeSignatureUsageProc
 
   @Override
   public boolean processPrimaryMethod(ChangeInfo changeInfo) {
-    if (!(changeInfo instanceof GrChangeInfoImpl)) return false;
+    if (!(changeInfo instanceof JavaChangeInfo)) return false;
 
-    GrChangeInfoImpl grInfo = (GrChangeInfoImpl)changeInfo;
-    GrMethod method = grInfo.getMethod();
-    if (grInfo.isGenerateDelegate()) {
-      return generateDelegate(grInfo);
+    JavaChangeInfo info = (JavaChangeInfo)changeInfo;
+    PsiMethod method = info.getMethod();
+    if (!(method instanceof GrMethod)) return false;
+
+    if (info.isGenerateDelegate()) {
+      return generateDelegate(info);
     }
 
-    return processPrimaryMethodInner(grInfo, method, null);
+    return processPrimaryMethodInner(info, ((GrMethod)method), null);
   }
 
   @Override
@@ -183,8 +185,8 @@ public class GrChangeSignatureUsageProcessor implements ChangeSignatureUsageProc
                                         UsageInfo[] usages, ChangeInfo changeInfo) {
   }
 
-  private static boolean generateDelegate(GrChangeInfoImpl grInfo) {
-    final GrMethod method = grInfo.getMethod();
+  private static boolean generateDelegate(JavaChangeInfo grInfo) {
+    final GrMethod method = (GrMethod)grInfo.getMethod();
     final PsiClass psiClass = method.getContainingClass();
     GrMethod newMethod = (GrMethod)method.copy();
     newMethod = (GrMethod)psiClass.addAfter(newMethod, method);
@@ -210,7 +212,7 @@ public class GrChangeSignatureUsageProcessor implements ChangeSignatureUsageProc
     return processPrimaryMethodInner(grInfo, method, null);
   }
 
-  private static void generateParametersForDelegateCall(GrChangeInfoImpl grInfo, GrMethod method, StringBuilder buffer) {
+  private static void generateParametersForDelegateCall(JavaChangeInfo grInfo, GrMethod method, StringBuilder buffer) {
     buffer.append("(");
 
     final GrParameter[] oldParameters = method.getParameterList().getParameters();
@@ -519,10 +521,15 @@ public class GrChangeSignatureUsageProcessor implements ChangeSignatureUsageProc
         argsToDelete.addAll(argInfo.args);
       }
 
-      for (JavaParameterInfo parameter : parameters) {
+      GrExpression[] values = new GrExpression[parameters.length];
+      for (int i = 0; i < parameters.length; i++) {
+        JavaParameterInfo parameter = parameters[i];
         int index = parameter.getOldIndex();
         if (index >= 0) {
           argsToDelete.removeAll(map[index].args);
+        }
+        else {
+          values[i] = createDefaultValue(factory, changeInfo, parameter, argumentList);
         }
       }
 
@@ -592,8 +599,7 @@ public class GrChangeSignatureUsageProcessor implements ChangeSignatureUsageProc
             continue;
           }
           try {
-
-            GrExpression value = createDefaultValue(factory, changeInfo, parameter, argumentList);
+            final GrExpression value = values[i];
             if (i > 0 && (value == null || anchor == null)) {
               PsiElement comma = Factory.createSingleLeafElement(GroovyTokenTypes.mCOMMA, ",", 0, 1,
                                                                  SharedImplUtil.findCharTableByTree(argumentList.getNode()),
@@ -610,6 +616,10 @@ public class GrChangeSignatureUsageProcessor implements ChangeSignatureUsageProc
             LOG.error(e.getMessage());
           }
         }
+      }
+
+      for (PsiElement arg : argsToDelete) {
+        arg.delete();
       }
 
       GrCall call = GroovyRefactoringUtil.getCallExpressionByMethodReference(element);
@@ -679,7 +689,10 @@ public class GrChangeSignatureUsageProcessor implements ChangeSignatureUsageProc
       }
     }
 
-
+    final PsiElement element = info.getActualValue(list.getParent());
+    if (element instanceof GrExpression) {
+      return (GrExpression)element;
+    }
     final String value = info.getDefaultValue();
     return !StringUtil.isEmpty(value) ? factory.createExpressionFromText(value, list) : null;
   }

@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2015 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,7 +20,6 @@ import com.intellij.psi.PsiJavaFile;
 import com.intellij.psi.impl.java.stubs.*;
 import com.intellij.psi.stubs.PsiFileStubImpl;
 import com.intellij.psi.tree.IStubFileElementType;
-import com.intellij.util.IncorrectOperationException;
 import com.intellij.util.io.StringRef;
 
 /**
@@ -35,7 +34,7 @@ public class PsiJavaFileStubImpl extends PsiFileStubImpl<PsiJavaFile> implements
     super(file);
     myPackageName = packageName;
     myCompiled = compiled;
-    myFactory = compiled ? new ClsStubPsiFactory() : new SourceStubPsiFactory();
+    myFactory = compiled ? ClsStubPsiFactory.INSTANCE : SourceStubPsiFactory.INSTANCE;
   }
 
   public PsiJavaFileStubImpl(String packageName, boolean compiled) {
@@ -72,14 +71,28 @@ public class PsiJavaFileStubImpl extends PsiFileStubImpl<PsiJavaFile> implements
     myFactory = factory;
   }
 
-  /** @deprecated use constructors (to be removed in IDEA 16) */
-  @SuppressWarnings("unused")
-  public void setPackageName(String packageName) {
-    throw new IncorrectOperationException();
-  }
-
   @Override
   public String toString() {
     return "PsiJavaFileStub [" + myPackageName + "]";
+  }
+
+  @Override
+  public boolean equals(Object o) {
+    if (this == o) return true;
+    if (o == null || getClass() != o.getClass()) return false;
+
+    PsiJavaFileStubImpl stub = (PsiJavaFileStubImpl)o;
+
+    if (myCompiled != stub.myCompiled) return false;
+    if (myPackageName != null ? !myPackageName.equals(stub.myPackageName) : stub.myPackageName != null) return false;
+
+    return true;
+  }
+
+  @Override
+  public int hashCode() {
+    int result = myPackageName != null ? myPackageName.hashCode() : 0;
+    result = 31 * result + (myCompiled ? 1 : 0);
+    return result;
   }
 }

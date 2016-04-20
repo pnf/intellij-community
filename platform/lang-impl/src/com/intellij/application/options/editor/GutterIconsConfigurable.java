@@ -18,6 +18,7 @@ package com.intellij.application.options.editor;
 import com.intellij.codeInsight.daemon.*;
 import com.intellij.ide.plugins.IdeaPluginDescriptor;
 import com.intellij.lang.LanguageExtensionPoint;
+import com.intellij.openapi.editor.ex.EditorSettingsExternalizable;
 import com.intellij.openapi.extensions.ExtensionPoint;
 import com.intellij.openapi.extensions.Extensions;
 import com.intellij.openapi.extensions.PluginDescriptor;
@@ -28,16 +29,20 @@ import com.intellij.openapi.project.ProjectManager;
 import com.intellij.openapi.util.Comparing;
 import com.intellij.ui.CheckBoxList;
 import com.intellij.ui.SeparatorWithText;
+import com.intellij.ui.components.JBCheckBox;
 import com.intellij.util.Function;
 import com.intellij.util.NullableFunction;
 import com.intellij.util.containers.ContainerUtil;
 import com.intellij.util.containers.MultiMap;
+import com.intellij.util.containers.hash.HashSet;
 import com.intellij.util.ui.EmptyIcon;
 import org.jetbrains.annotations.Nls;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import javax.swing.*;
+import javax.swing.event.ChangeListener;
 import java.awt.*;
 import java.util.*;
 import java.util.List;
@@ -48,6 +53,7 @@ import java.util.List;
 public class GutterIconsConfigurable implements Configurable, Configurable.NoScroll {
   private JPanel myPanel;
   private CheckBoxList<GutterIconDescriptor> myList;
+  private JBCheckBox myShowGutterIconsJBCheckBox;
   private List<GutterIconDescriptor> myDescriptors;
   private Map<GutterIconDescriptor, PluginDescriptor> myFirstDescriptors = new HashMap<GutterIconDescriptor, PluginDescriptor>();
 
@@ -80,6 +86,7 @@ public class GutterIconsConfigurable implements Configurable, Configurable.NoScr
       };
     MultiMap<PluginDescriptor, LanguageExtensionPoint<LineMarkerProvider>> map = ContainerUtil.groupBy(Arrays.asList(extensions), function);
     Map<GutterIconDescriptor, PluginDescriptor> pluginDescriptorMap = ContainerUtil.newHashMap();
+    Set<String> ids = new HashSet<>();
     myDescriptors = new ArrayList<GutterIconDescriptor>();
     for (final PluginDescriptor descriptor : map.keySet()) {
       Collection<LanguageExtensionPoint<LineMarkerProvider>> points = map.get(descriptor);
@@ -87,16 +94,21 @@ public class GutterIconsConfigurable implements Configurable, Configurable.NoScr
         GutterIconDescriptor instance = (GutterIconDescriptor)extensionPoint.getInstance();
         if (instance.getOptions().length > 0) {
           for (GutterIconDescriptor option : instance.getOptions()) {
-            myDescriptors.add(option);
+            if (ids.add(option.getId())) {
+              myDescriptors.add(option);
+            }
             pluginDescriptorMap.put(option, descriptor);
           }
         }
         else {
-          myDescriptors.add(instance);
+          if (ids.add(instance.getId())) {
+            myDescriptors.add(instance);
+          }
           pluginDescriptorMap.put(instance, descriptor);
         }
       }
     }
+    /*
     List<GutterIconDescriptor> options = new ArrayList<GutterIconDescriptor>();
     for (Iterator<GutterIconDescriptor> iterator = myDescriptors.iterator(); iterator.hasNext(); ) {
       GutterIconDescriptor descriptor = iterator.next();
@@ -106,6 +118,7 @@ public class GutterIconsConfigurable implements Configurable, Configurable.NoScr
       }
     }
     myDescriptors.addAll(options);
+    */
     myDescriptors.sort(new Comparator<GutterIconDescriptor>() {
       @Override
       public int compare(GutterIconDescriptor o1, GutterIconDescriptor o2) {
@@ -128,6 +141,7 @@ public class GutterIconsConfigurable implements Configurable, Configurable.NoScr
         return descriptor.getName();
       }
     });
+    myShowGutterIconsJBCheckBox.addChangeListener(e -> myList.setEnabled(myShowGutterIconsJBCheckBox.isSelected()));
     return myPanel;
   }
 
@@ -138,11 +152,16 @@ public class GutterIconsConfigurable implements Configurable, Configurable.NoScr
         return true;
       }
     }
-    return false;
+    return myShowGutterIconsJBCheckBox.isSelected() != EditorSettingsExternalizable.getInstance().areGutterIconsShown();
   }
 
   @Override
   public void apply() throws ConfigurationException {
+    EditorSettingsExternalizable editorSettings = EditorSettingsExternalizable.getInstance();
+    if (myShowGutterIconsJBCheckBox.isSelected() != editorSettings.areGutterIconsShown()) {
+      editorSettings.setGutterIconsShown(myShowGutterIconsJBCheckBox.isSelected());
+      EditorOptionsPanel.reinitAllEditors();
+    }
     for (GutterIconDescriptor descriptor : myDescriptors) {
       LineMarkerSettings.getSettings().setEnabled(descriptor, myList.isItemSelected(descriptor));
     }
@@ -156,11 +175,16 @@ public class GutterIconsConfigurable implements Configurable, Configurable.NoScr
     for (GutterIconDescriptor descriptor : myDescriptors) {
       myList.setItemSelected(descriptor, LineMarkerSettings.getSettings().isEnabled(descriptor));
     }
+    boolean gutterIconsShown = EditorSettingsExternalizable.getInstance().areGutterIconsShown();
+    myShowGutterIconsJBCheckBox.setSelected(gutterIconsShown);
+    myList.setEnabled(gutterIconsShown);
   }
 
   @Override
   public void disposeUIResources() {
-
+    for (ChangeListener listener : myShowGutterIconsJBCheckBox.getChangeListeners()) {
+      myShowGutterIconsJBCheckBox.removeChangeListener(listener);
+    }
   }
 
   private void createUIComponents() {
@@ -203,4 +227,7 @@ public class GutterIconsConfigurable implements Configurable, Configurable.NoScr
     };
     myList.setBorder(BorderFactory.createEmptyBorder());
   }
+  
+  @TestOnly
+  public List<GutterIconDescriptor> getDescriptors() { return myDescriptors; }
 }

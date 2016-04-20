@@ -18,7 +18,6 @@ package com.intellij.vcs.log.impl;
 import com.intellij.openapi.Disposable;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.application.ModalityState;
-import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.Disposer;
 import com.intellij.openapi.vcs.changes.ui.ChangesViewContentManager;
@@ -49,7 +48,6 @@ import java.util.Map;
 import java.util.Set;
 
 public class VcsLogTabsRefresher implements VcsLogRefresher, Disposable {
-  private static final Logger LOG = Logger.getInstance(VcsLogTabsRefresher.class);
   private static final String TOOLWINDOW_ID = ChangesViewContentManager.TOOLWINDOW_ID;
 
   @NotNull private final VcsLogDataManager myDataManager;
@@ -161,6 +159,12 @@ public class VcsLogTabsRefresher implements VcsLogRefresher, Disposable {
   public void dispose() {
     myToolWindow.getContentManager().removeContentManagerListener(myPostponedEventsListener);
     myToolWindowManager.removeToolWindowManagerListener(myPostponedEventsListener);
+
+    for (Content content : myToolWindow.getContentManager().getContents()) {
+      if (content instanceof TabbedContent) {
+        content.removePropertyChangeListener(myPostponedEventsListener);
+      }
+    }
   }
 
   private class MyRefreshPostponedEventsListener extends ContentManagerAdapter

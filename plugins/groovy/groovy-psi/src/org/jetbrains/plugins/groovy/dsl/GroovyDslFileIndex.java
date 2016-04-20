@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2015 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -43,11 +43,11 @@ import com.intellij.psi.util.CachedValue;
 import com.intellij.psi.util.CachedValueProvider;
 import com.intellij.psi.util.CachedValuesManager;
 import com.intellij.psi.util.PsiModificationTracker;
-import com.intellij.util.Function;
 import com.intellij.util.PathUtil;
-import com.intellij.util.concurrency.BoundedTaskExecutor;
+import com.intellij.util.concurrency.AppExecutorUtil;
 import com.intellij.util.containers.ConcurrentMultiMap;
 import com.intellij.util.containers.ContainerUtil;
+import com.intellij.util.containers.HashSet;
 import com.intellij.util.containers.MultiMap;
 import com.intellij.util.indexing.*;
 import com.intellij.util.io.EnumeratorStringDescriptor;
@@ -56,9 +56,7 @@ import com.intellij.util.io.URLUtil;
 import org.jetbrains.annotations.NonNls;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
-import org.jetbrains.ide.PooledThreadExecutor;
 import org.jetbrains.plugins.groovy.GroovyFileType;
-import org.jetbrains.plugins.groovy.annotator.GroovyFrameworkConfigNotification;
 import org.jetbrains.plugins.groovy.dsl.DslActivationStatus.Status;
 import org.jetbrains.plugins.groovy.lang.psi.GroovyFile;
 import org.jetbrains.plugins.groovy.lang.psi.api.statements.blocks.GrClosableBlock;
@@ -68,6 +66,7 @@ import org.jetbrains.plugins.groovy.lang.resolve.ResolveUtil;
 
 import java.io.File;
 import java.util.*;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
@@ -86,7 +85,7 @@ public class GroovyDslFileIndex extends ScalarIndexExtension<String> {
   private static final MultiMap<String, LinkedBlockingQueue<Pair<VirtualFile, GroovyDslExecutor>>> filesInProcessing =
     new ConcurrentMultiMap<String, LinkedBlockingQueue<Pair<VirtualFile, GroovyDslExecutor>>>();
 
-  private static final BoundedTaskExecutor ourPool = new BoundedTaskExecutor(PooledThreadExecutor.INSTANCE, 4);
+  private static final ExecutorService ourPool = AppExecutorUtil.createBoundedApplicationPoolExecutor(4);
 
   private final MyDataIndexer myDataIndexer = new MyDataIndexer();
   private final EnumeratorStringDescriptor myKeyDescriptor = new EnumeratorStringDescriptor();
@@ -205,7 +204,7 @@ public class GroovyDslFileIndex extends ScalarIndexExtension<String> {
     for (GroovyDslScript script : getDslScripts(project)) {
       final MultiMap staticInfo = script.getStaticInfo();
       //noinspection unchecked
-      final Collection infos = staticInfo != null ? staticInfo.get("scriptSuperClass") : Collections.emptyList();
+      final Collection infos = staticInfo.get("scriptSuperClass");
 
       for (Object info : infos) {
         if (info instanceof Map) {
@@ -362,17 +361,11 @@ public class GroovyDslFileIndex extends ScalarIndexExtension<String> {
 
   @NotNull
   private static Set<File> getBundledScriptFolders() {
-    final GroovyFrameworkConfigNotification[] extensions = GroovyFrameworkConfigNotification.EP_NAME.getExtensions();
-    Set<Class> classes = new HashSet<Class>(ContainerUtil.map2Set(extensions, new Function<GroovyFrameworkConfigNotification, Class>() {
-      @Override
-      public Class fun(GroovyFrameworkConfigNotification notification) {
-        return notification.getClass();
-      }
-    }));
-    classes.add(GroovyFrameworkConfigNotification.class); // for default extension
+    final GdslScriptProvider[] extensions = GdslScriptProvider.EP_NAME.getExtensions();
+    final Set<Class> classes = new HashSet<>(ContainerUtil.map(extensions, GdslScriptProvider::getClass));
+    classes.add(GdslScriptProvider.class); // for default extension
 
-    // perhaps a separate extension for that?
-    Set<File> scriptFolders = new LinkedHashSet<File>();
+    Set<File> scriptFolders = new LinkedHashSet<>();
     for (Class aClass : classes) {
       File jarPath = new File(PathUtil.getJarPathForClass(aClass));
       if (jarPath.isFile()) {
@@ -395,7 +388,7 @@ public class GroovyDslFileIndex extends ScalarIndexExtension<String> {
         // because service init requires a read action
         // and there could be a deadlock with a write action waiting already on EDT
         // if current thread is inside a non-cancellable read action
-        GroovyDslExecutor.getIdeaVersion();
+        GdslScriptBase.getIdeaVersion();
         DslActivationStatus.getInstance();
 
         int count = 0;
@@ -510,7 +503,7 @@ public class GroovyDslFileIndex extends ScalarIndexExtension<String> {
     }
 
     try {
-      return new GroovyDslExecutor(text, vfile.getName());
+      return GroovyDslExecutor.createAndRunExecutor(text, vfile.getName());
     }
     catch (final Throwable e) {
       if (project.isDisposed()) {

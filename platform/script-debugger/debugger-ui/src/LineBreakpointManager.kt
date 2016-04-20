@@ -197,7 +197,7 @@ abstract class LineBreakpointManager(internal val debugProcess: DebugProcessImpl
 
   protected open fun checkDuplicates(newTarget: BreakpointTarget, location: Location, breakpointManager: BreakpointManager): Breakpoint? = null
 
-  fun runToLocation(position: XSourcePosition) {
+  fun runToLocation(position: XSourcePosition, vm: Vm) {
     val addedBreakpoints = doRunToLocation(position)
     if (addedBreakpoints.isEmpty()) {
       return
@@ -206,16 +206,14 @@ abstract class LineBreakpointManager(internal val debugProcess: DebugProcessImpl
     synchronized (lock) {
       runToLocationBreakpoints.addAll(addedBreakpoints)
     }
-    debugProcess.resume(debugProcess.activeOrMainVm!!)
+    debugProcess.resume(vm)
   }
 
   protected abstract fun doRunToLocation(position: XSourcePosition): List<Breakpoint>
 
-  fun isRunToCursorBreakpoints(breakpoints: List<Breakpoint>): Boolean {
-    synchronized (runToLocationBreakpoints) {
-      return runToLocationBreakpoints.containsAll(breakpoints)
-    }
-  }
+  fun isRunToCursorBreakpoints(breakpoints: List<Breakpoint>) = synchronized (runToLocationBreakpoints) { runToLocationBreakpoints.containsAll(breakpoints) }
+
+  fun isRunToCursorBreakpoint(breakpoint: Breakpoint) = synchronized (runToLocationBreakpoints) { runToLocationBreakpoints.contains(breakpoint) }
 
   fun updateAllBreakpoints(vm: Vm) {
     val array = synchronized (lock) { IDE_TO_VM_BREAKPOINTS_KEY.get(vm)?.let { it.keys.toTypedArray() } } ?: return

@@ -36,6 +36,7 @@ import com.intellij.diff.requests.ContentDiffRequest;
 import com.intellij.diff.requests.DiffRequest;
 import com.intellij.diff.tools.util.base.HighlightPolicy;
 import com.intellij.diff.tools.util.base.IgnorePolicy;
+import com.intellij.diff.tools.util.base.TextDiffViewerUtil;
 import com.intellij.icons.AllIcons;
 import com.intellij.lang.Language;
 import com.intellij.openapi.actionSystem.AnAction;
@@ -376,23 +377,8 @@ public class DiffUtil {
     List<DiffContent> contents = request.getContents();
     List<String> titles = request.getContentTitles();
 
-    List<Charset> charsets = ContainerUtil.map(contents, new Function<DiffContent, Charset>() {
-      @Override
-      public Charset fun(DiffContent content) {
-        if (content instanceof EmptyContent) return null;
-        return ((DocumentContent)content).getCharset();
-      }
-    });
-    List<LineSeparator> separators = ContainerUtil.map(contents, new Function<DiffContent, LineSeparator>() {
-      @Override
-      public LineSeparator fun(DiffContent content) {
-        if (content instanceof EmptyContent) return null;
-        return ((DocumentContent)content).getLineSeparator();
-      }
-    });
-
-    boolean equalCharsets = isEqualElements(charsets);
-    boolean equalSeparators = isEqualElements(separators);
+    boolean equalCharsets = TextDiffViewerUtil.areEqualCharsets(contents);
+    boolean equalSeparators = TextDiffViewerUtil.areEqualLineSeparators(contents);
 
     List<JComponent> result = new ArrayList<JComponent>(contents.size());
 
@@ -419,20 +405,6 @@ public class DiffUtil {
     if (title != null) components.add(title);
     components.addAll(notifications);
     return createStackedComponents(components, TITLE_GAP);
-  }
-
-  private static boolean isEqualElements(@NotNull List elements) {
-    for (int i = 0; i < elements.size(); i++) {
-      for (int j = i + 1; j < elements.size(); j++) {
-        if (!isEqualElements(elements.get(i), elements.get(j))) return false;
-      }
-    }
-    return true;
-  }
-
-  private static boolean isEqualElements(@Nullable Object element1, @Nullable Object element2) {
-    if (element1 == null || element2 == null) return true;
-    return element1.equals(element2);
   }
 
   @Nullable
@@ -684,7 +656,7 @@ public class DiffUtil {
     }
   }
 
-  public static void deleteLines(@NotNull Document document, int line1, int line2) {
+  private static void deleteLines(@NotNull Document document, int line1, int line2) {
     TextRange range = getLinesRange(document, line1, line2);
     int offset1 = range.getStartOffset();
     int offset2 = range.getEndOffset();
@@ -698,7 +670,7 @@ public class DiffUtil {
     document.deleteString(offset1, offset2);
   }
 
-  public static void insertLines(@NotNull Document document, int line, @NotNull CharSequence text) {
+  private static void insertLines(@NotNull Document document, int line, @NotNull CharSequence text) {
     if (line == getLineCount(document)) {
       document.insertString(document.getTextLength(), "\n" + text);
     }
@@ -707,20 +679,12 @@ public class DiffUtil {
     }
   }
 
-  public static void replaceLines(@NotNull Document document, int line1, int line2, @NotNull CharSequence text) {
+  private static void replaceLines(@NotNull Document document, int line1, int line2, @NotNull CharSequence text) {
     TextRange currentTextRange = getLinesRange(document, line1, line2);
     int offset1 = currentTextRange.getStartOffset();
     int offset2 = currentTextRange.getEndOffset();
 
     document.replaceString(offset1, offset2, text);
-  }
-
-  public static void insertLines(@NotNull Document document1, int line, @NotNull Document document2, int otherLine1, int otherLine2) {
-    insertLines(document1, line, getLinesContent(document2, otherLine1, otherLine2));
-  }
-
-  public static void replaceLines(@NotNull Document document1, int line1, int line2, @NotNull Document document2, int oLine1, int oLine2) {
-    replaceLines(document1, line1, line2, getLinesContent(document2, oLine1, oLine2));
   }
 
   public static void applyModification(@NotNull Document document1,
@@ -731,13 +695,13 @@ public class DiffUtil {
                                        int oLine2) {
     if (line1 == line2 && oLine1 == oLine2) return;
     if (line1 == line2) {
-      insertLines(document1, line1, document2, oLine1, oLine2);
+      insertLines(document1, line1, getLinesContent(document2, oLine1, oLine2));
     }
     else if (oLine1 == oLine2) {
       deleteLines(document1, line1, line2);
     }
     else {
-      replaceLines(document1, line1, line2, document2, oLine1, oLine2);
+      replaceLines(document1, line1, line2, getLinesContent(document2, oLine1, oLine2));
     }
   }
 

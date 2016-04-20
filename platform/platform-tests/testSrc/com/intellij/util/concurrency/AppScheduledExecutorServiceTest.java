@@ -47,19 +47,19 @@ public class AppScheduledExecutorServiceTest extends TestCase {
 
     int delay = 1000;
 
-    ScheduledFuture<?> f1 = service.schedule((Runnable)() -> {
+    ScheduledFuture<?> f1 = service.schedule(() -> {
       log.add(new LogInfo(1));
       TimeoutUtil.sleep(10);
     }, delay, TimeUnit.MILLISECONDS);
     assertFalse(service.isShutdown());
     assertFalse(service.isTerminated());
-    ScheduledFuture<?> f2 = service.schedule((Runnable)() -> {
+    ScheduledFuture<?> f2 = service.schedule(() -> {
       log.add(new LogInfo(2));
       TimeoutUtil.sleep(10);
     }, delay, TimeUnit.MILLISECONDS);
     assertFalse(service.isShutdown());
     assertFalse(service.isTerminated());
-    ScheduledFuture<?> f3 = service.schedule((Runnable)() -> {
+    ScheduledFuture<?> f3 = service.schedule(() -> {
       log.add(new LogInfo(3));
       TimeoutUtil.sleep(10);
     }, delay, TimeUnit.MILLISECONDS);
@@ -89,10 +89,10 @@ public class AppScheduledExecutorServiceTest extends TestCase {
 
     assertEquals(4, log.size());
     assertEquals(4, log.get(0).runnable);
-    Set<Thread> usedThreads = new HashSet<>(Arrays.asList(log.get(1).currentThread, log.get(2).currentThread, log.get(3).currentThread));
-    assertEquals(3, usedThreads.size()); // must be executed in parallel
+    List<Thread> threads = Arrays.asList(log.get(1).currentThread, log.get(2).currentThread, log.get(3).currentThread);
+    assertEquals(threads.toString(), 3, new HashSet<>(threads).size()); // must be executed in parallel
 
-    service.doShutdown();
+    service.shutdownAppScheduledExecutorService();
     assertTrue(service.awaitTermination(10, TimeUnit.SECONDS));
   }
 
@@ -110,7 +110,9 @@ public class AppScheduledExecutorServiceTest extends TestCase {
     }
     catch (Exception ignored) {
     }
-    service.doShutdown();
+    finally {
+      service.shutdownAppScheduledExecutorService();
+    }
   }
 
   public void testMustNotBeAbleToShutdownGlobalPool() {
@@ -175,7 +177,7 @@ public class AppScheduledExecutorServiceTest extends TestCase {
     }
     assertEquals(usedThreads.toString(), 1, usedThreads.size()); // must be executed in same thread
 
-    service.doShutdown();
+    service.shutdownAppScheduledExecutorService();
     assertTrue(service.awaitTermination(10, TimeUnit.SECONDS));
   }
 
@@ -186,7 +188,7 @@ public class AppScheduledExecutorServiceTest extends TestCase {
 
     int N = 20;
     List<? extends Future<?>> futures =
-      ContainerUtil.map(Collections.nCopies(N, ""), s -> service.schedule((Runnable)()-> {
+      ContainerUtil.map(Collections.nCopies(N, ""), s -> service.schedule(()-> {
         log.add(new LogInfo(0));
         TimeoutUtil.sleep(10 * 1000);
       }
@@ -201,7 +203,7 @@ public class AppScheduledExecutorServiceTest extends TestCase {
     Set<Thread> usedThreads = ContainerUtil.map2Set(log, logInfo -> logInfo.currentThread);
 
     assertEquals(N, usedThreads.size());
-    service.doShutdown();
+    service.shutdownAppScheduledExecutorService();
     assertTrue(service.awaitTermination(10, TimeUnit.SECONDS));
   }
 }

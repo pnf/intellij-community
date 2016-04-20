@@ -56,8 +56,7 @@ public class InspectionRootNode extends InspectionTreeNode {
     return APP_ICON;
   }
 
-  @Override
-  public void add(MutableTreeNode newChild) {
-    super.add(newChild);
+  public InspectionTreeUpdater getUpdater() {
+    return myUpdater;
   }
 }

@@ -11,10 +11,9 @@ import com.intellij.ui.JBColor;
 import com.intellij.util.Function;
 import com.intellij.util.containers.hash.HashMap;
 import com.intellij.util.xmlb.XmlSerializer;
-import com.jetbrains.edu.EduUtils;
-import com.jetbrains.edu.courseFormat.*;
-import com.jetbrains.edu.learning.courseFormat.UserTest;
-import com.jetbrains.edu.oldCourseFormat.OldCourse;
+import com.jetbrains.edu.learning.core.EduUtils;
+import com.jetbrains.edu.learning.courseFormat.*;
+import com.jetbrains.edu.learning.oldCourseFormat.OldCourse;
 import org.jdom.Element;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -38,6 +37,7 @@ public class StudyTaskManager implements PersistentStateComponent<Element>, Dumb
   public Map<TaskFile, StudyStatus> myTaskStatusMap = new HashMap<>();
   public Map<Task, List<UserTest>> myUserTests = new HashMap<>();
   public List<String> myInvisibleFiles = new ArrayList<>();
+  public boolean myShouldUseJavaFx = StudyUtils.hasJavaFx();
 
   private StudyTaskManager() {
   }
@@ -71,7 +71,7 @@ public class StudyTaskManager implements PersistentStateComponent<Element>, Dumb
   @NotNull
   public List<UserTest> getUserTests(@NotNull final Task task) {
     final List<UserTest> userTests = myUserTests.get(task);
-    return userTests != null ? userTests : Collections.<UserTest>emptyList();
+    return userTests != null ? userTests : Collections.emptyList();
   }
 
   public void removeUserTest(@NotNull final Task task, @NotNull final UserTest userTest) {
@@ -126,15 +126,29 @@ public class StudyTaskManager implements PersistentStateComponent<Element>, Dumb
       StudyStatus taskFileStatus = getStatus(taskFile);
       if (taskFileStatus == StudyStatus.Unchecked) {
         task.setStatus(StudyStatus.Unchecked);
+        removeObsoleteTaskStatus(task);
         return StudyStatus.Unchecked;
       }
       if (taskFileStatus == StudyStatus.Failed) {
         task.setStatus(StudyStatus.Failed);
+        removeObsoleteTaskStatus(task);
         return StudyStatus.Failed;
       }
     }
     task.setStatus(StudyStatus.Solved);
+    removeObsoleteTaskStatus(task);
     return StudyStatus.Solved;
+  }
+  
+  private void removeObsoleteTaskStatus(Task task) {
+    for (TaskFile taskFile: task.taskFiles.values()) {
+      myTaskStatusMap.remove(taskFile);
+      
+      for (AnswerPlaceholder answerPlaceholder: taskFile.getAnswerPlaceholders()) {
+        myStudyStatusMap.remove(answerPlaceholder);
+      }
+    }
+    
   }
 
   private StudyStatus getStatus(@NotNull final TaskFile file) {
@@ -194,6 +208,7 @@ public class StudyTaskManager implements PersistentStateComponent<Element>, Dumb
         myInvisibleFiles = taskManager.myInvisibleFiles;
         myTaskStatusMap = taskManager.myTaskStatusMap;
         myStudyStatusMap = taskManager.myStudyStatusMap;
+        myShouldUseJavaFx = taskManager.myShouldUseJavaFx;
       }
     }
     final Element oldCourseElement = state.getChild(COURSE_ELEMENT);
@@ -236,5 +251,13 @@ public class StudyTaskManager implements PersistentStateComponent<Element>, Dumb
 
   public boolean isInvisibleFile(String path) {
     return myInvisibleFiles.contains(path);
+  }
+
+  public boolean shouldUseJavaFx() {
+    return myShouldUseJavaFx;
+  }
+
+  public void setShouldUseJavaFx(boolean shouldUseJavaFx) {
+    this.myShouldUseJavaFx = shouldUseJavaFx;
   }
 }

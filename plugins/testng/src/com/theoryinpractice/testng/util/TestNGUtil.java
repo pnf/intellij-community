@@ -17,6 +17,7 @@ package com.theoryinpractice.testng.util;
 
 import com.intellij.codeInsight.AnnotationUtil;
 import com.intellij.openapi.application.ApplicationManager;
+import com.intellij.openapi.application.ReadAction;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.module.Module;
 import com.intellij.openapi.module.ModuleUtilCore;
@@ -341,15 +342,17 @@ public class TestNGUtil {
   }
 
   public static Set<String> getAnnotationValues(String parameter, PsiClass... classes) {
-    Set<String> results = new HashSet<String>();
-    collectAnnotationValues(results, parameter, null, classes);
-    return results;
+    Map<String, Collection<String>> results = new HashMap<>();
+    final HashSet<String> set = new HashSet<>();
+    results.put(parameter, set);
+    collectAnnotationValues(results, null, classes);
+    return set;
   }
 
   /**
    * @return were javadoc params used
    */
-  public static void collectAnnotationValues(final Set<String> results, final String parameter, PsiMethod[] psiMethods, PsiClass... classes) {
+  public static void collectAnnotationValues(final Map<String, Collection<String>> results, PsiMethod[] psiMethods, PsiClass... classes) {
     final Set<String> test = new HashSet<String>(1);
     test.add(TEST_ANNOTATION_FQN);
     ContainerUtil.addAll(test, CONFIG_ANNOTATIONS_FQN);
@@ -358,7 +361,7 @@ public class TestNGUtil {
         ApplicationManager.getApplication().runReadAction(
           new Runnable() {
             public void run() {
-              appendAnnotationAttributeValues(parameter, results, AnnotationUtil.findAnnotation(psiMethod, test), psiMethod);
+              appendAnnotationAttributeValues(results, AnnotationUtil.findAnnotation(psiMethod, test), psiMethod);
             }
           }
         );
@@ -369,11 +372,11 @@ public class TestNGUtil {
         ApplicationManager.getApplication().runReadAction(new Runnable() {
           public void run() {
             if (psiClass != null && hasTest(psiClass)) {
-              appendAnnotationAttributeValues(parameter, results, AnnotationUtil.findAnnotation(psiClass, test), psiClass);
+              appendAnnotationAttributeValues(results, AnnotationUtil.findAnnotation(psiClass, test), psiClass);
               PsiMethod[] methods = psiClass.getMethods();
               for (PsiMethod method : methods) {
                 if (method != null) {
-                  appendAnnotationAttributeValues(parameter, results, AnnotationUtil.findAnnotation(method, test), method);
+                  appendAnnotationAttributeValues(results, AnnotationUtil.findAnnotation(method, test), method);
                 }
               }
             }
@@ -383,17 +386,19 @@ public class TestNGUtil {
     }
   }
 
-  private static void appendAnnotationAttributeValues(final String parameter,
-                                                      final Collection<String> results,
+  private static void appendAnnotationAttributeValues(final Map<String, Collection<String>> results,
                                                       final PsiAnnotation annotation,
                                                       final PsiDocCommentOwner commentOwner) {
-    if (annotation != null) {
-      final PsiAnnotationMemberValue value = annotation.findDeclaredAttributeValue(parameter);
-      if (value != null) {
-        results.addAll(extractValuesFromParameter(value));
+    for (String parameter : results.keySet()) {
+      final Collection<String> values = results.get(parameter);
+      if (annotation != null) {
+        final PsiAnnotationMemberValue value = annotation.findDeclaredAttributeValue(parameter);
+        if (value != null) {
+          values.addAll(extractValuesFromParameter(value));
+        }
+      } else {
+        values.addAll(extractAnnotationValuesFromJavaDoc(getTextJavaDoc(commentOwner), parameter));
       }
-    } else {
-      results.addAll(extractAnnotationValuesFromJavaDoc(getTextJavaDoc(commentOwner), parameter));
     }
   }
 
@@ -440,18 +445,14 @@ public class TestNGUtil {
         final PsiManager manager = PsiManager.getInstance(filter.getProject());
         final GlobalSearchScope projectScope = GlobalSearchScope.projectScope(manager.getProject());
         final GlobalSearchScope scope = projectScope.intersectWith(filter.getScope());
-        ApplicationManager.getApplication().runReadAction(new Runnable() {
-          public void run() {
-            for (final PsiClass psiClass : AllClassesSearch.search(scope, manager.getProject())) {
-              if (filter.isAccepted(psiClass)) {
-                if (indicator != null) {
-                  indicator.setText2("Found test class " + psiClass.getQualifiedName());
-                }
-                set.add(psiClass);
-              }
+        for (final PsiClass psiClass : AllClassesSearch.search(scope, manager.getProject())) {
+          if (filter.isAccepted(psiClass)) {
+            if (indicator != null) {
+              indicator.setText2("Found test class " + ReadAction.compute(psiClass::getQualifiedName));
             }
+            set.add(psiClass);
           }
-        });
+        }
         holder[0] = set.toArray(new PsiClass[set.size()]);
       }
     };

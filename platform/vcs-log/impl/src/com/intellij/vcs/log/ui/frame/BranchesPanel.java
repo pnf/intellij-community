@@ -4,8 +4,10 @@ import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.ui.components.JBScrollPane;
 import com.intellij.util.Function;
 import com.intellij.util.containers.ContainerUtil;
-import com.intellij.vcs.log.*;
-import com.intellij.vcs.log.data.RefsModel;
+import com.intellij.vcs.log.RefGroup;
+import com.intellij.vcs.log.VcsLogFilterCollection;
+import com.intellij.vcs.log.VcsLogRefs;
+import com.intellij.vcs.log.VcsRef;
 import com.intellij.vcs.log.data.VcsLogDataManager;
 import com.intellij.vcs.log.data.VisiblePack;
 import com.intellij.vcs.log.impl.SingletonRefGroup;
@@ -35,6 +37,7 @@ public class BranchesPanel extends JPanel {
   @NotNull private final VcsLogDataManager myDataManager;
   @NotNull private final VcsLogUiImpl myUi;
   @NotNull private final VcsRefPainter myReferencePainter;
+  @NotNull private final JBScrollPane myScrollPane;
 
   @NotNull private LinkedHashMap<VirtualFile, List<RefGroup>> myRefGroups;
   @Nullable private Collection<VirtualFile> myRoots = null;
@@ -47,8 +50,18 @@ public class BranchesPanel extends JPanel {
     myUi = ui;
     myRefGroups = getRefsToDisplayOnPanel(initialRefsModel);
     myReferencePainter = new VcsRefPainter(myUi.getColorManager(), true);
+    myScrollPane =
+      new JBScrollPane(this, ScrollPaneConstants.VERTICAL_SCROLLBAR_NEVER, ScrollPaneConstants.HORIZONTAL_SCROLLBAR_ALWAYS);
+    myScrollPane.getHorizontalScrollBar().setPreferredSize(new Dimension(0, 0));
+    myScrollPane.getHorizontalScrollBar().setUnitIncrement(10);
+    myScrollPane.setBorder(BorderFactory.createEmptyBorder());
 
     recreateComponents();
+  }
+
+  @NotNull
+  public JComponent getMainComponent() {
+    return myScrollPane;
   }
 
   private void recreateComponents() {
@@ -79,7 +92,8 @@ public class BranchesPanel extends JPanel {
     return groups;
   }
 
-  private static List<RefGroup> expandExpandableGroups(List<RefGroup> refGroups) {
+  @NotNull
+  private static List<RefGroup> expandExpandableGroups(@NotNull List<RefGroup> refGroups) {
     List<RefGroup> groups = ContainerUtil.newArrayList();
     for (RefGroup group : refGroups) {
       if (group.isExpanded() || group.getRefs().size() == 1) {
@@ -110,13 +124,8 @@ public class BranchesPanel extends JPanel {
     }
   }
 
-  public JComponent createScrollPane() {
-    JBScrollPane scrollPane =
-      new JBScrollPane(this, ScrollPaneConstants.VERTICAL_SCROLLBAR_NEVER, ScrollPaneConstants.HORIZONTAL_SCROLLBAR_ALWAYS);
-    scrollPane.getHorizontalScrollBar().setPreferredSize(new Dimension(0, 0));
-    scrollPane.getHorizontalScrollBar().setUnitIncrement(10);
-    scrollPane.setBorder(BorderFactory.createEmptyBorder());
-    return scrollPane;
+  public void setBranchPanelVisible(boolean visible) {
+    myScrollPane.setVisible(visible);
   }
 
   private class RootGroupComponent extends JPanel {
@@ -135,7 +144,7 @@ public class BranchesPanel extends JPanel {
   private static class ReferenceGroupComponent extends JPanel {
     @NotNull private final RefGroup myGroup;
     @NotNull private final VcsRefPainter myReferencePainter;
-    @NotNull private final VcsLogUiImpl myUI;
+    @NotNull private final VcsLogUiImpl myUi;
     @NotNull private final VirtualFile myRoot;
 
     private ReferenceGroupComponent(@NotNull RefGroup group,
@@ -144,14 +153,14 @@ public class BranchesPanel extends JPanel {
                                     @NotNull VirtualFile root) {
       myGroup = group;
       myReferencePainter = referencePainter;
-      myUI = ui;
+      myUi = ui;
       myRoot = root;
       addMouseListener(new MyMouseAdapter());
     }
 
     @Override
     protected void paintComponent(Graphics g) {
-      Color rootIndicatorColor = VcsLogColorManagerImpl.getIndicatorColor(myUI.getColorManager().getRootColor(myRoot));
+      Color rootIndicatorColor = VcsLogColorManagerImpl.getIndicatorColor(myUi.getColorManager().getRootColor(myRoot));
       myReferencePainter
         .paint(myGroup.getName(), g, 0, (getHeight() - myReferencePainter.getHeight(this)) / 2, myGroup.getBgColor(), rootIndicatorColor);
     }
@@ -169,16 +178,16 @@ public class BranchesPanel extends JPanel {
     private class MyMouseAdapter extends MouseAdapter {
       @Override
       public void mouseClicked(MouseEvent e) {
-        if (!myUI.areGraphActionsEnabled()) {
+        if (!myUi.areGraphActionsEnabled()) {
           return;
         }
 
         if (myGroup.getRefs().size() == 1) {
           VcsRef ref = myGroup.getRefs().iterator().next();
-          myUI.jumpToCommit(ref.getCommitHash(), ref.getRoot());
+          myUi.jumpToCommit(ref.getCommitHash(), ref.getRoot());
         }
         else {
-          ReferencePopupBuilder popupBuilder = new ReferencePopupBuilder(myGroup, myUI);
+          ReferencePopupBuilder popupBuilder = new ReferencePopupBuilder(myGroup, myUi);
           popupBuilder.getPopup().showUnderneathOf(ReferenceGroupComponent.this);
         }
       }

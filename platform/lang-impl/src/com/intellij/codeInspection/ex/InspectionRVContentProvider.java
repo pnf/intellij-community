@@ -20,12 +20,11 @@
  */
 package com.intellij.codeInspection.ex;
 
-import com.google.common.collect.Multimap;
 import com.intellij.codeInspection.CommonProblemDescriptor;
 import com.intellij.codeInspection.QuickFix;
+import com.intellij.codeInspection.offlineViewer.OfflineRefElementNode;
 import com.intellij.codeInspection.reference.RefEntity;
 import com.intellij.codeInspection.ui.*;
-import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.module.Module;
 import com.intellij.openapi.module.ModuleManager;
@@ -37,8 +36,6 @@ import com.intellij.util.ui.tree.TreeUtil;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import javax.swing.tree.DefaultTreeModel;
-import javax.swing.tree.MutableTreeNode;
 import javax.swing.tree.TreeNode;
 import javax.swing.tree.TreePath;
 import java.util.*;
@@ -110,7 +107,7 @@ public abstract class InspectionRVContentProvider {
     InspectionToolPresentation presentation = context.getPresentation(wrapper);
     Map<String, Set<RefEntity>> content = presentation.getContent();
     Map<RefEntity, CommonProblemDescriptor[]> problems = presentation.getProblemElements();
-    appendToolNodeContent(context, toolNode, parentNode, showStructure, content, problems, null);
+    appendToolNodeContent(context, toolNode, parentNode, showStructure, content, problems);
   }
 
   public abstract void appendToolNodeContent(@NotNull GlobalInspectionContextImpl context,
@@ -118,8 +115,7 @@ public abstract class InspectionRVContentProvider {
                                              @NotNull InspectionTreeNode parentNode,
                                              final boolean showStructure,
                                              @NotNull Map<String, Set<RefEntity>> contents,
-                                             @NotNull Map<RefEntity, CommonProblemDescriptor[]> problems,
-                                             @Nullable final DefaultTreeModel model);
+                                             @NotNull Map<RefEntity, CommonProblemDescriptor[]> problems);
 
   protected abstract void appendDescriptor(@NotNull GlobalInspectionContextImpl context,
                                            @NotNull InspectionToolWrapper toolWrapper,
@@ -211,8 +207,12 @@ public abstract class InspectionRVContentProvider {
           for (UserObjectContainer<T> container : packageDescriptors.get(pNode)) {
             appendDescriptor(context, toolWrapper, container, pNode, canPackageRepeat);
           }
-          for (int i = 0; i < pNode.getChildCount(); i++) {
-            final TreeNode childNode = pNode.getChildAt(i);
+          final int count = pNode.getChildCount();
+          final ArrayList<TreeNode> childNodes = new ArrayList<>(count);
+          for (int i = 0; i < count; i++) {
+            childNodes.add(pNode.getChildAt(i));
+          }
+          for (TreeNode childNode: childNodes) {
             if (childNode instanceof ProblemDescriptionNode) {
               createdNodesConsumer.accept(pNode);
               break;
@@ -282,7 +282,7 @@ public abstract class InspectionRVContentProvider {
           if (node instanceof RefElementNode) {
             final RefElementNode refElementNode = (RefElementNode)node;
             final Object userObject = finalContainer.getUserObject();
-            final Object object = refElementNode.getUserObject();
+            final Object object = node instanceof OfflineRefElementNode ? ((OfflineRefElementNode) refElementNode).getOfflineDescriptor() : refElementNode.getUserObject();
             if ((object == null || userObject.getClass().equals(object.getClass())) && finalContainer.areEqual(object, userObject)) {
               if (firstLevel.get()) {
                 result.set(refElementNode);
@@ -315,7 +315,7 @@ public abstract class InspectionRVContentProvider {
   }
 
   @SuppressWarnings({"ConstantConditions"}) //class cast suppression
-  protected static void merge(@Nullable DefaultTreeModel model, InspectionTreeNode child, InspectionTreeNode parent, boolean merge) {
+  protected static void merge(InspectionTreeNode child, InspectionTreeNode parent, boolean merge) {
     if (merge) {
       for (int i = 0; i < parent.getChildCount(); i++) {
         InspectionTreeNode current = (InspectionTreeNode)parent.getChildAt(i);
@@ -324,34 +324,31 @@ public abstract class InspectionRVContentProvider {
         }
         if (current instanceof InspectionPackageNode) {
           if (((InspectionPackageNode)current).getPackageName().compareTo(((InspectionPackageNode)child).getPackageName()) == 0) {
-            processDepth(model, child, current);
+            processDepth(child, current);
             return;
           }
         }
         else if (current instanceof RefElementNode) {
-          if (((RefElementNode)current).getElement().getName().compareTo(((RefElementNode)child).getElement().getName()) == 0) {
-            processDepth(model, child, current);
+          if (((RefElementNode)current).getElement().getName().compareTo(((RefElementNode)child).getElement().getName()) == 0 &&
+              ((RefElementNode)current).getElement().getQualifiedName().compareTo(((RefElementNode)child).getElement().getQualifiedName()) == 0) {
+            processDepth(child, current);
             return;
           }
         }
         else if (current instanceof InspectionNode) {
           if (((InspectionNode)current).getToolWrapper().getShortName().compareTo(((InspectionNode)child).getToolWrapper().getShortName()) == 0) {
-            processDepth(model, child, current);
+            processDepth(child, current);
             return;
           }
         }
         else if (current instanceof InspectionModuleNode) {
           if (((InspectionModuleNode)current).getName().compareTo(((InspectionModuleNode)child).getName()) == 0) {
-            processDepth(model, child, current);
+            processDepth(child, current);
             return;
           }
         }
       }
     }
-    add(model, child, parent);
-  }
-
-  protected static void add(@Nullable final DefaultTreeModel model, final InspectionTreeNode child, final InspectionTreeNode parent) {
     insertByIndex(child, parent);
   }
 
@@ -361,19 +358,18 @@ public abstract class InspectionRVContentProvider {
     }
     final int i = TreeUtil.indexedBinarySearch(parent, child, InspectionResultsViewComparator.getInstance());
     if (i >= 0){
-      parent.add(child);
       return;
     }
     parent.insert(child, -i -1);
   }
 
-  private static void processDepth(@Nullable DefaultTreeModel model, final InspectionTreeNode child, final InspectionTreeNode current) {
+  private static void processDepth(final InspectionTreeNode child, final InspectionTreeNode current) {
     InspectionTreeNode[] children = new InspectionTreeNode[child.getChildCount()];
     for (int i = 0; i < children.length; i++) {
       children[i] = (InspectionTreeNode)child.getChildAt(i);
     }
     for (InspectionTreeNode node : children) {
-      merge(model, node, current, true);
+      merge(node, current, true);
     }
   }
 }

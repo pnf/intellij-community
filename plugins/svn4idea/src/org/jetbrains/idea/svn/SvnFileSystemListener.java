@@ -298,7 +298,7 @@ public class SvnFileSystemListener extends CommandAdapter implements LocalFileOp
       }
 
       if (! isUndo && list != null) {
-        SvnChangelistListener.putUnderList(vcs.getProject(), list, dst);
+        SvnChangelistListener.putUnderList(vcs, list, dst);
       }
     }
     catch(VcsException e) {
@@ -723,10 +723,14 @@ public class SvnFileSystemListener extends CommandAdapter implements LocalFileOp
     myFilesToRefresh.clear();
   }
 
-  private static void filterOutInvalid(final Collection<VirtualFile> files) {
+  private static void filterOutInvalid(@NotNull Collection<VirtualFile> files) {
     for (Iterator<VirtualFile> iterator = files.iterator(); iterator.hasNext();) {
-      final VirtualFile file = iterator.next();
-      if (! file.isValid() || ! file.exists()) {
+      VirtualFile file = iterator.next();
+
+      if (file == null) {
+        iterator.remove();
+      }
+      else if (!file.isValid() || !file.exists()) {
         LOG.info("Refresh root is not valid: " + file.getPath());
         iterator.remove();
       }

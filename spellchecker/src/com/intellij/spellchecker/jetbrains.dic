@@ -103,6 +103,7 @@ const
 constexpr
 contravariant
 controlfile
+coursecreator
 covariant
 cron
 ctrl
@@ -243,6 +244,7 @@ inout
 instantiable
 insteadof
 intellij
+intrinsics
 iphone
 iphoneos
 isnan
@@ -567,11 +569,14 @@ startup
 stateful
 stdarg
 stdlib
+stepic
 stmt
 strictfp
 stringify
 stylesheet
 stylesheets
+subexpression
+subexpressions
 sublicense
 subpackage
 subpackages
@@ -586,6 +591,8 @@ subview
 subviews
 superclass
 superclasses
+superinterface
+superinterfaces
 superview
 superviews
 sybase

@@ -579,6 +579,16 @@ public class StringUtil extends StringUtilRt {
                                                      @Nullable String additionalChars,
                                                      boolean escapeSlash,
                                                      @NotNull @NonNls StringBuilder buffer) {
+    return escapeStringCharacters(length, str, additionalChars, escapeSlash, true, buffer);
+  }
+  
+  @NotNull
+  public static StringBuilder escapeStringCharacters(int length,
+                                                     @NotNull String str,
+                                                     @Nullable String additionalChars,
+                                                     boolean escapeSlash,
+                                                     boolean escapeUnicode,
+                                                     @NotNull @NonNls StringBuilder buffer) {
     char prev = 0;
     for (int idx = 0; idx < length; idx++) {
       char ch = str.charAt(idx);
@@ -610,7 +620,7 @@ public class StringUtil extends StringUtilRt {
           else if (additionalChars != null && additionalChars.indexOf(ch) > -1 && (escapeSlash || prev != '\\')) {
             buffer.append("\\").append(ch);
           }
-          else if (!isPrintableUnicode(ch)) {
+          else if (escapeUnicode && !isPrintableUnicode(ch)) {
             CharSequence hexCode = StringUtilRt.toUpperCase(Integer.toHexString(ch));
             buffer.append("\\u");
             int paddingCount = 4 - hexCode.length();
@@ -852,7 +862,8 @@ public class StringUtil extends StringUtilRt {
       return suggestion.substring(0, len - 2) + "en";
     }
 
-    if (endsWithIgnoreCase(suggestion, "s") || endsWithIgnoreCase(suggestion, "x") || endsWithIgnoreCase(suggestion, "ch")) {
+    if (endsWithIgnoreCase(suggestion, "s") || endsWithIgnoreCase(suggestion, "x") ||
+        endsWithIgnoreCase(suggestion, "ch") || endsWithIgnoreCase(suggestion, "sh")) {
       return suggestion + "es";
     }
 
@@ -2968,6 +2979,14 @@ public class StringUtil extends StringUtilRt {
     CharSequence ts2 = new CharSequenceSubSequence(s2, start2, end2);
 
     return equals(ts1, ts2);
+  }
+
+  @Contract(pure = true)
+  public static boolean findIgnoreCase(@Nullable String toFind, @NotNull String... where) {
+    for (String string : where) {
+      if (equalsIgnoreCase(toFind, string)) return true;
+    }
+    return false;
   }
 
   @Contract(pure = true)

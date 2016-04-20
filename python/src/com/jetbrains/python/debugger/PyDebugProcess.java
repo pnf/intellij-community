@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2015 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,6 +15,7 @@
  */
 package com.jetbrains.python.debugger;
 
+import com.google.common.base.Strings;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.intellij.execution.process.ProcessEvent;
@@ -30,6 +31,8 @@ import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.editor.Document;
 import com.intellij.openapi.extensions.Extensions;
 import com.intellij.openapi.fileEditor.FileDocumentManager;
+import com.intellij.openapi.module.Module;
+import com.intellij.openapi.module.ModuleUtilCore;
 import com.intellij.openapi.progress.ProgressIndicator;
 import com.intellij.openapi.progress.ProgressManager;
 import com.intellij.openapi.progress.Task;
@@ -52,6 +55,7 @@ import com.intellij.xdebugger.breakpoints.XBreakpointHandler;
 import com.intellij.xdebugger.breakpoints.XBreakpointType;
 import com.intellij.xdebugger.breakpoints.XLineBreakpoint;
 import com.intellij.xdebugger.evaluation.XDebuggerEditorsProvider;
+import com.intellij.xdebugger.frame.XSuspendContext;
 import com.intellij.xdebugger.frame.XValueChildrenList;
 import com.intellij.xdebugger.impl.XSourcePositionImpl;
 import com.intellij.xdebugger.stepping.XSmartStepIntoHandler;
@@ -59,10 +63,12 @@ import com.jetbrains.python.PythonFileType;
 import com.jetbrains.python.console.PythonDebugLanguageConsoleView;
 import com.jetbrains.python.console.pydev.PydevCompletionVariant;
 import com.jetbrains.python.debugger.pydev.*;
-import com.jetbrains.python.psi.PyFunction;
-import com.jetbrains.python.psi.PyImportElement;
+import com.jetbrains.python.psi.*;
+import com.jetbrains.python.psi.resolve.PyResolveContext;
 import com.jetbrains.python.psi.resolve.PyResolveUtil;
+import com.jetbrains.python.psi.resolve.RatedResolveResult;
 import com.jetbrains.python.psi.types.PyClassType;
+import com.jetbrains.python.psi.types.PyModuleType;
 import com.jetbrains.python.psi.types.PyType;
 import com.jetbrains.python.psi.types.PyTypeParser;
 import org.jetbrains.annotations.NotNull;
@@ -104,7 +110,6 @@ public class PyDebugProcess extends XDebugProcess implements IPyDebugProcess, Pr
   private PyPositionConverter myPositionConverter;
   private final XSmartStepIntoHandler<?> mySmartStepIntoHandler;
   private boolean myWaitingForConnection = false;
-  private PyStackFrame myStackFrameBeforeResume;
   private PyStackFrame myConsoleContextFrame = null;
   private PyReferrersLoader myReferrersProvider;
 
@@ -156,18 +161,6 @@ public class PyDebugProcess extends XDebugProcess implements IPyDebugProcess, Pr
       @Override
       public void detached() {
         detachDebuggedProcess();
-      }
-    });
-
-    session.addSessionListener(new XDebugSessionAdapter() {
-      @Override
-      public void beforeSessionResume() {
-        if (session.getCurrentStackFrame() instanceof PyStackFrame) {
-          myStackFrameBeforeResume = (PyStackFrame)session.getCurrentStackFrame();
-        }
-        else {
-          myStackFrameBeforeResume = null;
-        }
       }
     });
   }
@@ -384,24 +377,24 @@ public class PyDebugProcess extends XDebugProcess implements IPyDebugProcess, Pr
   }
 
   @Override
-  public void startStepOver() {
-    passToCurrentThread(ResumeOrStepCommand.Mode.STEP_OVER);
+  public void startStepOver(@Nullable XSuspendContext context) {
+    passToCurrentThread(context, ResumeOrStepCommand.Mode.STEP_OVER);
   }
 
   @Override
-  public void startStepInto() {
-    passToCurrentThread(ResumeOrStepCommand.Mode.STEP_INTO);
+  public void startStepInto(@Nullable XSuspendContext context) {
+    passToCurrentThread(context, ResumeOrStepCommand.Mode.STEP_INTO);
   }
 
-  public void startStepIntoMyCode() {
+  public void startStepIntoMyCode(@Nullable XSuspendContext context) {
     if (!checkCanPerformCommands()) return;
     getSession().sessionResumed();
-    passToCurrentThread(ResumeOrStepCommand.Mode.STEP_INTO_MY_CODE);
+    passToCurrentThread(context, ResumeOrStepCommand.Mode.STEP_INTO_MY_CODE);
   }
 
   @Override
-  public void startStepOut() {
-    passToCurrentThread(ResumeOrStepCommand.Mode.STEP_OUT);
+  public void startStepOut(@Nullable XSuspendContext context) {
+    passToCurrentThread(context, ResumeOrStepCommand.Mode.STEP_OUT);
   }
 
   public void startSmartStepInto(String functionName) {
@@ -419,7 +412,7 @@ public class PyDebugProcess extends XDebugProcess implements IPyDebugProcess, Pr
   }
 
   @Override
-  public void resume() {
+  public void resume(@Nullable XSuspendContext context) {
     passToAllThreads(ResumeOrStepCommand.Mode.RESUME);
   }
 
@@ -439,10 +432,10 @@ public class PyDebugProcess extends XDebugProcess implements IPyDebugProcess, Pr
     }
   }
 
-  private void passToCurrentThread(final ResumeOrStepCommand.Mode mode) {
+  private void passToCurrentThread(@Nullable XSuspendContext context, final ResumeOrStepCommand.Mode mode) {
     dropFrameCaches();
     if (isConnected()) {
-      String threadId = threadIdBeforeResumeOrStep();
+      String threadId = threadIdBeforeResumeOrStep(context);
 
       for (PyThreadInfo suspendedThread : mySuspendedThreads) {
         if (threadId == null || threadId.equals(suspendedThread.getId())) {
@@ -454,13 +447,13 @@ public class PyDebugProcess extends XDebugProcess implements IPyDebugProcess, Pr
   }
 
   @Nullable
-  private String threadIdBeforeResumeOrStep() {
-    String threadId = null;
-    if (myStackFrameBeforeResume != null) {
-      threadId = myStackFrameBeforeResume.getThreadId();
+  private static String threadIdBeforeResumeOrStep(@Nullable XSuspendContext context) {
+    if (context instanceof PySuspendContext) {
+      return ((PySuspendContext)context).getActiveExecutionStack().getThreadId();
     }
-
-    return threadId;
+    else {
+      return null;
+    }
   }
 
   protected boolean isConnected() {
@@ -486,7 +479,7 @@ public class PyDebugProcess extends XDebugProcess implements IPyDebugProcess, Pr
   }
 
   @Override
-  public void runToPosition(@NotNull final XSourcePosition position) {
+  public void runToPosition(@NotNull final XSourcePosition position, @Nullable XSuspendContext context) {
     dropFrameCaches();
     if (isConnected() && !mySuspendedThreads.isEmpty()) {
       final PySourcePosition pyPosition = myPositionConverter.convertToPython(position);
@@ -509,7 +502,7 @@ public class PyDebugProcess extends XDebugProcess implements IPyDebugProcess, Pr
       }
       myDebugger.setTempBreakpoint(type, pyPosition.getFile(), pyPosition.getLine());
 
-      passToCurrentThread(ResumeOrStepCommand.Mode.RESUME);
+      passToCurrentThread(context, ResumeOrStepCommand.Mode.RESUME);
     }
   }
 
@@ -741,7 +734,7 @@ public class PyDebugProcess extends XDebugProcess implements IPyDebugProcess, Pr
 
         if (breakpoint != null) {
           if (!getSession().breakpointReached(breakpoint, threadInfo.getMessage(), suspendContext)) {
-            resume();
+            resume(suspendContext);
           }
         }
         else {
@@ -850,30 +843,64 @@ public class PyDebugProcess extends XDebugProcess implements IPyDebugProcess, Pr
 
   @Nullable
   @Override
-  public XSourcePosition getSourcePositionForName(String name) {
+  public XSourcePosition getSourcePositionForName(String name, String parentType) {
+    if (name == null) return null;
     XSourcePosition currentPosition = getCurrentFrameSourcePosition();
 
     final PsiFile file = getPsiFile(currentPosition);
 
     if (file == null) return null;
 
+    if (Strings.isNullOrEmpty(parentType)) {
+      final Ref<PsiElement> elementRef = resolveInCurrentFrame(name, currentPosition, file);
+      return elementRef.isNull() ? null : XSourcePositionImpl.createByElement(elementRef.get());
+    }
+    else {
+      final PyType parentDef = resolveTypeFromString(parentType, file);
+      if (parentDef == null) {
+        return null;
+      }
+      List<? extends RatedResolveResult> results =
+        parentDef.resolveMember(name, null, AccessDirection.READ, PyResolveContext.noImplicits());
+      if (results != null && !results.isEmpty()) {
+        return XSourcePositionImpl.createByElement(results.get(0).getElement());
+      }
+      else {
+        return typeToPosition(parentDef); // at least try to return parent
+      }
+    }
+  }
+
+
+  @NotNull
+  private static Ref<PsiElement> resolveInCurrentFrame(final String name, XSourcePosition currentPosition, PsiFile file) {
+    final Ref<PsiElement> elementRef = Ref.create();
     PsiElement currentElement = file.findElementAt(currentPosition.getOffset());
 
     if (currentElement == null) {
-      return null;
+      return elementRef;
     }
 
-    final Ref<PsiElement> elementRef = Ref.create();
 
     PyResolveUtil.scopeCrawlUp(new PsiScopeProcessor() {
       @Override
       public boolean execute(@NotNull PsiElement element, @NotNull ResolveState state) {
-        if (!(element instanceof PyImportElement)) {
+        if ((element instanceof PyImportElement)) {
+          PyImportElement importElement = (PyImportElement)element;
+          if (name.equals(importElement.getVisibleName())) {
+            if (elementRef.isNull()) {
+              elementRef.set(element);
+            }
+            return false;
+          }
+          return true;
+        }
+        else {
           if (elementRef.isNull()) {
             elementRef.set(element);
           }
+          return false;
         }
-        return false;
       }
 
       @Nullable
@@ -887,9 +914,7 @@ public class PyDebugProcess extends XDebugProcess implements IPyDebugProcess, Pr
 
       }
     }, currentElement, name, null);
-
-    return elementRef.isNull() ? null
-                               : XSourcePositionImpl.createByElement(elementRef.get());
+    return elementRef;
   }
 
   @Nullable
@@ -909,15 +934,44 @@ public class PyDebugProcess extends XDebugProcess implements IPyDebugProcess, Pr
 
     final PsiFile file = getPsiFile(currentPosition);
 
-    if (file == null) return null;
+    if (file == null || typeName == null || !(file instanceof PyFile)) return null;
 
 
-    PyType type = PyTypeParser.getTypeByName(file, typeName);
+    final PyType pyType = resolveTypeFromString(typeName, file);
+    return pyType == null ? null : typeToPosition(pyType);
+  }
 
-    if (type instanceof PyClassType) {
-      return XSourcePositionImpl.createByElement(((PyClassType)type).getPyClass());
+  @Nullable
+  private static XSourcePosition typeToPosition(PyType pyType) {
+    final PyClassType classType = PyUtil.as(pyType, PyClassType.class);
+
+    if (classType != null) {
+      return XSourcePositionImpl.createByElement(classType.getPyClass());
     }
 
+    final PyModuleType moduleType = PyUtil.as(pyType, PyModuleType.class);
+    if (moduleType != null) {
+      return XSourcePositionImpl.createByElement(moduleType.getModule());
+    }
     return null;
+  }
+
+  private PyType resolveTypeFromString(String typeName, PsiFile file) {
+    typeName = typeName.replace("__builtin__.", "");
+    PyType pyType = null;
+    if (!typeName.contains(".")) {
+
+      pyType = PyTypeParser.getTypeByName(file, typeName);
+    }
+    if (pyType == null) {
+      PyElementGenerator generator = PyElementGenerator.getInstance(getProject());
+      PyPsiFacade psiFacade = PyPsiFacade.getInstance(getProject());
+      PsiFile dummyFile = generator.createDummyFile(((PyFile)file).getLanguageLevel(), "");
+      Module moduleForFile = ModuleUtilCore.findModuleForPsiElement(file);
+      dummyFile.putUserData(ModuleUtilCore.KEY_MODULE, moduleForFile);
+
+      pyType = psiFacade.parseTypeAnnotation(typeName, dummyFile);
+    }
+    return pyType;
   }
 }

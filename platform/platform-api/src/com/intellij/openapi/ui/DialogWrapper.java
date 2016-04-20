@@ -1641,6 +1641,13 @@ public abstract class DialogWrapper {
 
   @NotNull
   private AsyncResult<Boolean> invokeShow() {
+    Window window = myPeer.getWindow();
+    if (window instanceof JDialog && ((JDialog)window).getModalityType() == Dialog.ModalityType.DOCUMENT_MODAL) {
+      if (ApplicationManager.getApplication().isWriteAccessAllowed()) {
+        LOG.error("Project-modal dialogs should not be shown under a write action.");
+      }
+    }
+
     final AsyncResult<Boolean> result = new AsyncResult<Boolean>();
 
     ensureEventDispatchThread();

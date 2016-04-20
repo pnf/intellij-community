@@ -24,6 +24,7 @@ import com.intellij.openapi.command.CommandProcessor;
 import com.intellij.openapi.fileChooser.FileChooserDescriptor;
 import com.intellij.openapi.fileChooser.FileChooserDescriptorFactory;
 import com.intellij.openapi.fileTypes.FileType;
+import com.intellij.openapi.fileTypes.ex.FileTypeChooser;
 import com.intellij.openapi.help.HelpManager;
 import com.intellij.openapi.keymap.KeymapUtil;
 import com.intellij.openapi.project.Project;
@@ -36,6 +37,7 @@ import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.psi.*;
 import com.intellij.refactoring.RefactoringBundle;
+import com.intellij.refactoring.move.moveFilesOrDirectories.MoveFilesOrDirectoriesUtil;
 import com.intellij.ui.DocumentAdapter;
 import com.intellij.ui.RecentsManager;
 import com.intellij.ui.TextFieldWithHistoryWithBrowseButton;
@@ -48,6 +50,7 @@ import com.intellij.util.PathUtilRt;
 import com.intellij.util.ui.FormBuilder;
 import com.intellij.util.ui.UIUtil;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import javax.swing.*;
 import javax.swing.event.DocumentEvent;
@@ -79,6 +82,7 @@ public class CopyFilesOrDirectoriesDialog extends DialogWrapper {
   private TextFieldWithHistoryWithBrowseButton myTargetDirectoryField;
   private JCheckBox myOpenFilesInEditor = createOpenInEditorCB();
   private JTextField myNewNameField;
+  private final PsiElement[] myElements;
   private final Project myProject;
   private final boolean myShowDirectoryField;
   private final boolean myShowNewNameField;
@@ -86,8 +90,9 @@ public class CopyFilesOrDirectoriesDialog extends DialogWrapper {
   private PsiDirectory myTargetDirectory;
   private boolean myFileCopy = false;
 
-  public CopyFilesOrDirectoriesDialog(PsiElement[] elements, PsiDirectory defaultTargetDirectory, Project project, boolean doClone) {
+  public CopyFilesOrDirectoriesDialog(PsiElement[] elements, @Nullable PsiDirectory defaultTargetDirectory, Project project, boolean doClone) {
     super(project, true);
+    myElements = elements;
     myProject = project;
     myShowDirectoryField = !doClone;
     myShowNewNameField = elements.length == 1;
@@ -116,6 +121,7 @@ public class CopyFilesOrDirectoriesDialog extends DialogWrapper {
           myNewNameField.select(0, dotIdx);
           myNewNameField.putClientProperty(DialogWrapperPeer.HAVE_INITIAL_SELECTION, true);
         }
+        myTargetDirectory = file.getContainingDirectory();
         myFileCopy = true;
       }
       else {
@@ -259,6 +265,10 @@ public class CopyFilesOrDirectoriesDialog extends DialogWrapper {
         Messages.showErrorDialog(myNewNameField, "Name is not a valid file name");
         return;
       }
+
+      if (myFileCopy && FileTypeChooser.getKnownFileTypeOrAssociate(myTargetDirectory.getVirtualFile(), newName, myProject) == null) {
+        return;
+      }
     }
 
     saveOpenInEditorState(myOpenFilesInEditor.isSelected());
@@ -291,6 +301,16 @@ public class CopyFilesOrDirectoriesDialog extends DialogWrapper {
 
       if (myTargetDirectory == null) {
         Messages.showErrorDialog(myProject, RefactoringBundle.message("cannot.create.directory"), RefactoringBundle.message("error.title"));
+        return;
+      }
+
+      try {
+        for (PsiElement element : myElements) {
+          MoveFilesOrDirectoriesUtil.checkIfMoveIntoSelf(element, myTargetDirectory);
+        }
+      }
+      catch (IncorrectOperationException e) {
+        Messages.showErrorDialog(myProject, e.getMessage(), RefactoringBundle.message("error.title"));
         return;
       }
     }

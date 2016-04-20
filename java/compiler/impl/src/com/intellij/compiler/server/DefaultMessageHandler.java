@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,7 +20,6 @@ import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.progress.ProcessCanceledException;
 import com.intellij.openapi.progress.ProgressIndicator;
-import com.intellij.openapi.progress.util.ProgressIndicatorBase;
 import com.intellij.openapi.progress.util.ProgressIndicatorUtils;
 import com.intellij.openapi.progress.util.ReadTask;
 import com.intellij.openapi.project.DumbService;
@@ -36,12 +35,12 @@ import com.intellij.util.concurrency.SequentialTaskExecutor;
 import io.netty.channel.Channel;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
-import org.jetbrains.ide.PooledThreadExecutor;
 import org.jetbrains.jps.api.CmdlineProtoUtil;
 import org.jetbrains.jps.api.CmdlineRemoteProto;
 import org.jetbrains.org.objectweb.asm.Opcodes;
 
 import java.util.*;
+import java.util.concurrent.ExecutorService;
 
 /**
  * @author Eugene Zhuravlev
@@ -51,7 +50,7 @@ public abstract class DefaultMessageHandler implements BuilderMessageHandler {
   private static final Logger LOG = Logger.getInstance("#com.intellij.compiler.server.DefaultMessageHandler");
   public static final long CONSTANT_SEARCH_TIME_LIMIT = 60 * 1000L; // one minute
   private final Project myProject;
-  private final SequentialTaskExecutor myTaskExecutor = new SequentialTaskExecutor(PooledThreadExecutor.INSTANCE);
+  private final ExecutorService myTaskExecutor = SequentialTaskExecutor.createSequentialApplicationPoolExecutor();
   private volatile long myConstantSearchTime = 0L;
 
   protected DefaultMessageHandler(Project project) {
@@ -93,7 +92,7 @@ public abstract class DefaultMessageHandler implements BuilderMessageHandler {
   protected abstract void handleBuildEvent(UUID sessionId, CmdlineRemoteProto.Message.BuilderMessage.BuildEvent event);
 
   private void handleConstantSearchTask(final Channel channel, final UUID sessionId, final CmdlineRemoteProto.Message.BuilderMessage.ConstantSearchTask task) {
-    ProgressIndicatorUtils.scheduleWithWriteActionPriority(new ProgressIndicatorBase(), myTaskExecutor, new ReadTask() {
+    ProgressIndicatorUtils.scheduleWithWriteActionPriority(myTaskExecutor, new ReadTask() {
       @Override
       public Continuation runBackgroundProcess(@NotNull ProgressIndicator indicator) throws ProcessCanceledException {
         return DumbService.getInstance(myProject).runReadActionInSmartMode(new Computable<Continuation>() {

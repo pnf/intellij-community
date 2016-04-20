@@ -15,9 +15,11 @@
  */
 package com.intellij.notification.impl.ui;
 
+import com.intellij.icons.AllIcons;
 import com.intellij.ide.ui.UISettings;
 import com.intellij.notification.Notification;
 import com.intellij.notification.NotificationListener;
+import com.intellij.notification.impl.NotificationsManagerImpl;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.ui.MessageType;
 import com.intellij.openapi.util.Pair;
@@ -76,12 +78,11 @@ public class NotificationsUtil {
       subtitle = StringUtil.trimLog(StringUtil.notNullize(subtitle), TITLE_LIMIT);
       content = StringUtil.trimLog(content, CONTENT_LIMIT);
     }
+    if (isContent) {
+      content = StringUtil.replace(content, "<p/>", "<br>");
+    }
     String colorText = color == null ? null : "#" + ColorUtil.toHex(color);
     return buildHtml(title, subtitle, content, style, isContent ? null : colorText, isContent ? colorText : null, contentStyle);
-  }
-
-  public static String buildHtml(@Nullable String title, @Nullable String subtitle, @Nullable String content, @Nullable String style) {
-    return buildHtml(title, subtitle, content, style, null, null, null);
   }
 
   @NotNull
@@ -123,18 +124,18 @@ public class NotificationsUtil {
 
   @Nullable
   public static String getFontStyle() {
-    String fontName = null;
+    String fontName = getFontName();
+    return StringUtil.isEmpty(fontName) ? null : "font-family:" + fontName + ";";
+  }
+
+  @Nullable
+  public static String getFontName() {
     UISettings uiSettings = UISettings.getInstance();
     if (uiSettings.OVERRIDE_NONIDEA_LAF_FONTS) {
-      fontName = uiSettings.FONT_FACE;
+      return uiSettings.FONT_FACE;
     }
-    else {
-      Pair<String, Integer> systemFontData = UIUtil.getSystemFontData();
-      if (systemFontData != null) {
-        fontName = systemFontData.first;
-      }
-    }
-    return StringUtil.isEmpty(fontName) ? null : "font-family:" + fontName + ";";
+    Pair<String, Integer> systemFontData = UIUtil.getSystemFontData();
+    return systemFontData == null ? null : systemFontData.first;
   }
 
   @Nullable
@@ -157,7 +158,23 @@ public class NotificationsUtil {
   @NotNull
   public static Icon getIcon(@NotNull final Notification notification) {
     Icon icon = notification.getIcon();
-    return icon != null ? icon : getMessageType(notification).getDefaultIcon();
+    if (icon != null) {
+      return icon;
+    }
+
+    if (!NotificationsManagerImpl.newEnabled()) {
+      return getMessageType(notification).getDefaultIcon();
+    }
+
+    switch (notification.getType()) {
+      case WARNING:
+        return AllIcons.General.BalloonWarning;
+      case ERROR:
+        return AllIcons.Ide.FatalError;
+      case INFORMATION:
+      default:
+        return AllIcons.General.BalloonInformation;
+    }
   }
 
   @NotNull

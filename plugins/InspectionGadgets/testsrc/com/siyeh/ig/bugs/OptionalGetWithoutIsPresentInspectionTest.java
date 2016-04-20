@@ -17,7 +17,6 @@ package com.siyeh.ig.bugs;
 
 import com.intellij.codeInspection.InspectionProfileEntry;
 import com.siyeh.ig.LightInspectionTestCase;
-import junit.framework.TestCase;
 import org.jetbrains.annotations.Nullable;
 
 /**
@@ -55,6 +54,62 @@ public class OptionalGetWithoutIsPresentInspectionTest extends LightInspectionTe
            "}");
   }
 
+  public void testWhile1() {
+    doTest("import java.util.Optional;" +
+           "class X {" +
+           "  void m() {" +
+           "    Optional<String> o = Optional.empty();" +
+           "    while (!o.isPresent()){" +
+           "      o = Optional.of(\"\");" +
+           "    }" +
+           "    o.get();" +
+           "  }" +
+           "}");
+  }
+
+  public void testWhile2() {
+    doTest("import java.util.Optional;" +
+           "class X {" +
+           "  void m() {" +
+           "    Optional<String> o = Optional.empty();" +
+           "    while (o.isPresent()) {" +
+           "      o.get();" +
+           "    }" +
+           "  }" +
+           "}");
+  }
+
+  public void testPolyadicExpression1() {
+    doTest("import java.util.Optional;" +
+           "class X {" +
+           "  public void demo(Optional<String> value) {\n" +
+           "    boolean flag = value.isPresent() && \"Yes\".equals(value.get());\n" +
+           "  }" +
+           "}");
+  }
+
+  public void testPolyadicExpression2() {
+    doTest("import java.util.Optional;" +
+           "class X {" +
+           "  boolean m(Optional<String> o) {" +
+           "    return !o.isPresent() || o.get().equals(\"j\");" +
+           "  }" +
+           "}");
+  }
+
+  public void testPolyadicExpression3() {
+    doTest("import java.util.Optional;" +
+           "class X {" +
+           "  String g() {" +
+           "    Optional<String> o = Optional.empty();" +
+           "    if(o == null || !o.isPresent()) {" +
+           "      return \"\";" +
+           "    }" +
+           "    return o.get();" +
+           "  }" +
+           "}");
+  }
+
   public void testOptionalGetWithoutIsPresent() {
     doTest();
   }
@@ -79,6 +134,9 @@ public class OptionalGetWithoutIsPresentInspectionTest extends LightInspectionTe
       "  public static<T> Optional<T> empty() {" +
       "    return new Optional<>();" +
       "  }" +
+      "  public static <T> Optional<T> of(T value) {" +
+      "    return new Optional<>(value);" +
+      "  }" +
       "}",
 
       "package java.util;" +
@@ -89,6 +147,16 @@ public class OptionalGetWithoutIsPresentInspectionTest extends LightInspectionTe
       "  public double getAsDouble() {" +
       "    return 0.0;" +
       "  }" +
+      "}",
+
+      "package org.junit;" +
+      "public class Assert {" +
+      "  public static void assertTrue(boolean b) {}" +
+      "}",
+
+      "package org.testng;" +
+      "public class Assert {" +
+      "  public static void assertTrue(boolean b) {}" +
       "}"
     };
   }

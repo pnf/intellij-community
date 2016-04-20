@@ -16,10 +16,10 @@
 
 package com.intellij.codeInsight.completion;
 
+import com.intellij.codeInsight.AutoPopupController;
 import com.intellij.codeInsight.CodeInsightSettings;
 import com.intellij.codeInsight.CodeInsightUtilBase;
 import com.intellij.codeInsight.completion.impl.CompletionServiceImpl;
-import com.intellij.codeInsight.editorActions.CompletionAutoPopupHandler;
 import com.intellij.codeInsight.editorActions.smartEnter.SmartEnterProcessor;
 import com.intellij.codeInsight.editorActions.smartEnter.SmartEnterProcessors;
 import com.intellij.codeInsight.lookup.*;
@@ -31,6 +31,7 @@ import com.intellij.lang.Language;
 import com.intellij.lang.injection.InjectedLanguageManager;
 import com.intellij.openapi.actionSystem.DataContext;
 import com.intellij.openapi.application.ApplicationManager;
+import com.intellij.openapi.application.TransactionGuard;
 import com.intellij.openapi.command.CommandProcessor;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.editor.*;
@@ -41,7 +42,10 @@ import com.intellij.openapi.fileEditor.FileDocumentManager;
 import com.intellij.openapi.project.DumbService;
 import com.intellij.openapi.project.IndexNotReadyException;
 import com.intellij.openapi.project.Project;
-import com.intellij.openapi.util.*;
+import com.intellij.openapi.util.Disposer;
+import com.intellij.openapi.util.Key;
+import com.intellij.openapi.util.Pair;
+import com.intellij.openapi.util.Ref;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.psi.PsiDocumentManager;
@@ -485,15 +489,12 @@ public class CodeCompletionHandlerBase {
 
       final CompletionPhase.CommittingDocuments phase = (CompletionPhase.CommittingDocuments)CompletionServiceImpl.getCompletionPhase();
 
-      CompletionAutoPopupHandler.runLaterWithCommitted(project, copyDocument, new Runnable() {
-        @Override
-        public void run() {
-          if (phase.checkExpired()) {
-            Disposer.dispose(translator);
-            return;
-          }
-          doComplete(initContext, hasModifiers, invocationCount, hostCopy, hostMap, translator);
+      AutoPopupController.runTransactionWithEverythingCommitted(project, () -> {
+        if (phase.checkExpired()) {
+          Disposer.dispose(translator);
+          return;
         }
+        doComplete(initContext, hasModifiers, invocationCount, hostCopy, hostMap, translator);
       });
     }
     else {
@@ -629,20 +630,17 @@ public class CodeCompletionHandlerBase {
 
   private static void afterItemInsertion(final CompletionProgressIndicator indicator, final Runnable laterRunnable) {
     if (laterRunnable != null) {
-      final Runnable runnable1 = new Runnable() {
-        @Override
-        public void run() {
-          if (!indicator.getProject().isDisposed()) {
-            laterRunnable.run();
-          }
-          indicator.disposeIndicator();
+      final Runnable runnable1 = () -> {
+        if (!indicator.getProject().isDisposed()) {
+          laterRunnable.run();
         }
+        indicator.disposeIndicator();
       };
       if (ApplicationManager.getApplication().isUnitTestMode()) {
         runnable1.run();
       }
       else {
-        ApplicationManager.getApplication().invokeLater(runnable1);
+        TransactionGuard.getInstance().submitTransactionLater(indicator.getProject(), runnable1);
       }
     }
     else {

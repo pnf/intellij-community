@@ -51,6 +51,12 @@ public class VcsLogContentProvider implements ChangesViewContentProvider {
   public VcsLogContentProvider(@NotNull Project project, @NotNull VcsLogManager logManager) {
     myProject = project;
     myLogManager = logManager;
+    myLogManager.setRecreateMainLogHandler(new Runnable() {
+          @Override
+          public void run() {
+            recreateLog();
+          }
+        });
   }
 
   @Override
@@ -89,8 +95,27 @@ public class VcsLogContentProvider implements ChangesViewContentProvider {
                                 @NotNull String shortName) {
     logManager.watchTab(ContentUtilEx.getFullName(TAB_NAME, shortName), logUi);
     logUi.requestFocus();
-    ContentUtilEx.addTabbedContent(toolWindow.getContentManager(), logUi.getMainFrame().getMainComponent(), TAB_NAME, shortName, true, logUi);
+    ContentUtilEx
+      .addTabbedContent(toolWindow.getContentManager(), logUi.getMainFrame().getMainComponent(), TAB_NAME, shortName, true, logUi);
     toolWindow.activate(null);
+  }
+
+  private void closeLogTabs() {
+    ToolWindow toolWindow = ToolWindowManager.getInstance(myProject).getToolWindow(ToolWindowId.VCS);
+
+    TabbedContent content = ContentUtilEx.findTabbedContent(toolWindow.getContentManager(), TAB_NAME);
+    if (content != null) {
+      toolWindow.getContentManager().removeContent(content, true);
+    }
+  }
+
+  private void recreateLog() {
+    myContainer.removeAll();
+    closeLogTabs();
+
+    myLogManager.disposeLog();
+
+    initContentInternal();
   }
 
   private class MyVcsListener implements VcsListener {
@@ -99,10 +124,7 @@ public class VcsLogContentProvider implements ChangesViewContentProvider {
       ApplicationManager.getApplication().invokeLater(new Runnable() {
         @Override
         public void run() {
-          myContainer.removeAll();
-          myLogManager.disposeLog();
-
-          initContentInternal();
+          recreateLog();
         }
       });
     }

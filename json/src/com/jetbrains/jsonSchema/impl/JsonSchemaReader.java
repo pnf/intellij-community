@@ -5,7 +5,11 @@ import com.google.gson.stream.JsonReader;
 import com.google.gson.stream.JsonToken;
 import com.google.gson.stream.JsonWriter;
 import com.intellij.notification.NotificationGroup;
+import com.intellij.openapi.diagnostic.Logger;
+import com.intellij.openapi.util.text.StringUtil;
+import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.util.Consumer;
+import com.intellij.util.PairConvertor;
 import com.intellij.util.ThrowablePairConsumer;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -18,10 +22,17 @@ import java.util.*;
  * @author Irina.Chernushina on 8/27/2015.
  */
 public class JsonSchemaReader {
+  public static final Logger LOG = Logger.getInstance("#com.jetbrains.jsonSchema.impl.JsonSchemaReader");
   public static final NotificationGroup ERRORS_NOTIFICATION = NotificationGroup.logOnlyGroup("JSON Schema");
+  @Nullable private final VirtualFile myKey;
 
-  public JsonSchemaObject read(@NotNull final Reader reader) throws IOException {
+  public JsonSchemaReader(@Nullable final VirtualFile key) {
+    myKey = key;
+  }
+
+  public JsonSchemaObject read(@NotNull final Reader reader, @Nullable JsonSchemaExportedDefinitions definitions) throws IOException {
     final JsonReader in = new JsonReader(reader);
+    in.setLenient(true);
 
     in.beginObject();
     final JsonSchemaObject object = new JsonSchemaObject();
@@ -32,22 +43,68 @@ public class JsonSchemaReader {
       adapter.readSomeProperty(in, name, object);
     }
 
-    processReferences(object, adapter.getAllObjects(), adapter.getIds());
+    processReferences(object, adapter.getAllObjects(), definitions);
     final ArrayList<JsonSchemaObject> withoutDefinitions = new ArrayList<JsonSchemaObject>(adapter.getAllObjects());
     removeDefinitions(object, withoutDefinitions);
     return object;
   }
 
-  public static boolean isJsonSchema(@NotNull final String string, Consumer<String> errorConsumer) {
+  public static boolean isJsonSchema(@NotNull JsonSchemaExportedDefinitions definitions,
+                                     @NotNull VirtualFile key,
+                                     @NotNull final String string,
+                                     Consumer<String> errorConsumer) throws IOException {
+    final JsonSchemaReader reader = new JsonSchemaReader(key);
+    java.io.StringReader stringReader = new java.io.StringReader(string);
     try {
-      new JsonSchemaReader().read(new java.io.StringReader(string));
-      return true;
-    } catch (IOException e) {
-      errorConsumer.consume(e.getMessage());
-      return false;
+      reader.read(stringReader, null);
     } catch (Exception e) {
+      LOG.info(e);
       errorConsumer.consume(e.getMessage());
       return false;
+    }
+    // have two stages so that just syntax errors do not clear cache
+    stringReader = new java.io.StringReader(string);
+    try {
+      reader.read(stringReader, definitions);
+    }
+    catch (Exception e) {
+      LOG.info(e);
+      errorConsumer.consume(e.getMessage());
+      throw e;
+    }
+    return true;
+  }
+
+  public static void registerObjectsExportedDefinitions(@NotNull VirtualFile key,
+                                                        @NotNull final JsonSchemaExportedDefinitions definitionsObject,
+                                                        @NotNull final JsonSchemaObject object) {
+    String id = object.getId();
+    if (!StringUtil.isEmptyOrSpaces(id)) {
+      id = id.endsWith("#") ? id.substring(0, id.length() - 1) : id;
+      final PairConvertor<String, Map<String, JsonSchemaObject>, Map<String, JsonSchemaObject>> convertor =
+        new PairConvertor<String, Map<String, JsonSchemaObject>,Map<String, JsonSchemaObject>>() {
+          @Override
+          public Map<String, JsonSchemaObject> convert(String s, Map<String, JsonSchemaObject> map) {
+            final Map<String, JsonSchemaObject> converted = new HashMap<>();
+            for (Map.Entry<String, JsonSchemaObject> entry : map.entrySet()) {
+              String key = entry.getKey();
+              key = key.startsWith("/") ? key.substring(1) : key;
+              converted.put(s + key, entry.getValue());
+            }
+            return converted;
+          }
+      };
+
+      final HashMap<String, JsonSchemaObject> map = new HashMap<>();
+      final Map<String, JsonSchemaObject> definitions = object.getDefinitions();
+      if (definitions != null && !definitions.isEmpty()) {
+        map.putAll(convertor.convert("#/definitions/", definitions));
+      }
+      final Map<String, JsonSchemaObject> properties = object.getProperties();
+      if (properties != null && !properties.isEmpty()) {
+        map.putAll(convertor.convert("#/properties/", properties));
+      }
+      definitionsObject.register(key, id, map);
     }
   }
 
@@ -64,20 +121,26 @@ public class JsonSchemaReader {
     }
   }
 
-  private void processReferences(JsonSchemaObject root, Set<JsonSchemaObject> objects, Map<String, JsonSchemaObject> ids) {
+  private void processReferences(JsonSchemaObject root,
+                                 Set<JsonSchemaObject> objects,
+                                 @Nullable JsonSchemaExportedDefinitions definitions) {
     final ArrayDeque<JsonSchemaObject> queue = new ArrayDeque<JsonSchemaObject>();
     queue.addAll(objects);
     int control = 10000;
 
     while (!queue.isEmpty()) {
-      // todo graph algorithm??
       if (--control == 0) throw new RuntimeException("cyclic definitions search");
 
       final JsonSchemaObject current = queue.removeFirst();
       if ("#".equals(current.getRef())) continue;
       if (current.getRef() != null) {
-        final JsonSchemaObject definition = findDefinition(current.getRef(), root, ids);
+        final JsonSchemaObject definition = findDefinition(myKey, current.getRef(), root, definitions);
         if (definition == null) {
+          if (definitions == null) {
+            // just skip current item
+            current.setRef(null);
+            continue;
+          }
           throw new RuntimeException("Can not find definition: " + current.getRef());
         }
         if (definition.getRef() != null && !"#".equals(definition.getRef())) {
@@ -95,16 +158,41 @@ public class JsonSchemaReader {
     }
   }
 
+  private static JsonSchemaObject findAbsoluteDefinition(@Nullable VirtualFile key,
+                                                         @NotNull String ref,
+                                                         @Nullable JsonSchemaExportedDefinitions definitions) {
+    if (!ref.startsWith("#/")) {
+      int idx = ref.indexOf("#/");
+      if (idx == -1) throw new RuntimeException("Non-relative or erroneous reference: " + ref);
+      if (definitions == null || key == null) return null;
+      final String url = ref.substring(0, idx);
+      final String relative = ref.substring(idx);
+      return definitions.findDefinition(key, url, relative);
+    }
+    return null;
+  }
+
   @Nullable
-  private JsonSchemaObject findDefinition(String ref, JsonSchemaObject root, Map<String, JsonSchemaObject> ids) {
+  private static JsonSchemaObject findDefinition(@Nullable VirtualFile key,
+                                                @NotNull String ref,
+                                                @NotNull final JsonSchemaObject root,
+                                                @Nullable JsonSchemaExportedDefinitions definitions) {
     if ("#".equals(ref)) {
       return root;
     }
-    final JsonSchemaObject found = ids.get(ref);
-    if (found != null) return found;
-    if (!ref.startsWith("#/")) throw new RuntimeException("Non-relative reference: " + ref);
-    ref = ref.substring(2);
+    if (!ref.startsWith("#/")) {
+      return findAbsoluteDefinition(key, ref, definitions);
+    }
+    return findRelativeDefinition(ref, root);
+  }
 
+  @NotNull
+  public static JsonSchemaObject findRelativeDefinition(@NotNull String ref, @NotNull JsonSchemaObject root) {
+    if ("#".equals(ref)) {
+      return root;
+    }
+    if (!ref.startsWith("#/")) throw new RuntimeException("Non-relative or erroneous reference: " + ref);
+    ref = ref.substring(2);
     final String[] parts = ref.split("/");
     JsonSchemaObject current = root;
     for (int i = 0; i < parts.length; i++) {
@@ -293,7 +381,12 @@ public class JsonSchemaReader {
         }
 
         private JsonSchemaType parseType(JsonReader in) throws IOException {
-          return JsonSchemaType.valueOf("_" + in.nextString());
+          final String typeString = in.nextString();
+          try {
+            return JsonSchemaType.valueOf("_" + typeString);
+          } catch (IllegalArgumentException e) {
+            throw new IOException("Wrong type value: " + typeString + "\"");
+          }
         }
       };
     }

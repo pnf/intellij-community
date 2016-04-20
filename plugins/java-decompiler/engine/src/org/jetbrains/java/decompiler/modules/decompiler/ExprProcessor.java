@@ -42,7 +42,6 @@ import org.jetbrains.java.decompiler.struct.gen.VarType;
 import java.util.*;
 
 public class ExprProcessor implements CodeConstants {
-
   public static final String UNDEFINED_TYPE_STRING = "<undefinedtype>";
   public static final String UNKNOWN_TYPE_STRING = "<unknown>";
   public static final String NULL_TYPE_STRING = "<null>";
@@ -50,7 +49,6 @@ public class ExprProcessor implements CodeConstants {
   private static final HashMap<Integer, Integer> mapConsts = new HashMap<Integer, Integer>();
 
   static {
-
     // mapConsts.put(new Integer(opc_i2l), new
     // Integer(FunctionExprent.FUNCTION_I2L));
     // mapConsts.put(new Integer(opc_i2f), new
@@ -141,18 +139,17 @@ public class ExprProcessor implements CodeConstants {
 
   private static final String[] typeNames = new String[]{"byte", "char", "double", "float", "int", "long", "short", "boolean",};
 
-  private final VarProcessor varProcessor = (VarProcessor)DecompilerContext.getProperty(DecompilerContext.CURRENT_VAR_PROCESSOR);
+  private final MethodDescriptor methodDescriptor;
+  private final VarProcessor varProcessor;
+
+  public ExprProcessor(MethodDescriptor md, VarProcessor varProc) {
+    methodDescriptor = md;
+    varProcessor = varProc;
+  }
 
   public void processStatement(RootStatement root, StructClass cl) {
-
     FlattenStatementsHelper flatthelper = new FlattenStatementsHelper();
     DirectGraph dgraph = flatthelper.buildDirectGraph(root);
-
-    //		try {
-    //			DotExporter.toDotFile(dgraph, new File("c:\\Temp\\gr12_my.dot"));
-    //		} catch (Exception ex) {
-    //			ex.printStackTrace();
-    //		}
 
     // collect finally entry points
     Set<String> setFinallyShortRangeEntryPoints = new HashSet<String>();
@@ -368,7 +365,7 @@ public class ExprProcessor implements CodeConstants {
           }
           else if (cn instanceof LinkConstant) {
             //TODO: for now treat Links as Strings
-            pushEx(stack, exprlist, new ConstExprent(VarType.VARTYPE_STRING, ((LinkConstant)cn).elementname , bytecode_offsets));
+            pushEx(stack, exprlist, new ConstExprent(VarType.VARTYPE_STRING, ((LinkConstant)cn).elementname, bytecode_offsets));
           }
           break;
         case opc_iload:
@@ -422,7 +419,8 @@ public class ExprProcessor implements CodeConstants {
           Exprent index_store = stack.pop();
           Exprent arr_store = stack.pop();
           AssignmentExprent arrassign =
-            new AssignmentExprent(new ArrayExprent(arr_store, index_store, arrtypes[instr.opcode - opc_iastore], bytecode_offsets), value, bytecode_offsets);
+            new AssignmentExprent(new ArrayExprent(arr_store, index_store, arrtypes[instr.opcode - opc_iastore], bytecode_offsets), value,
+                                  bytecode_offsets);
           exprlist.add(arrassign);
           break;
         case opc_iadd:
@@ -523,7 +521,7 @@ public class ExprProcessor implements CodeConstants {
         case opc_tableswitch:
         case opc_lookupswitch:
           exprlist.add(new SwitchExprent(stack.pop(), bytecode_offsets));
-        break;
+          break;
         case opc_ireturn:
         case opc_lreturn:
         case opc_freturn:
@@ -533,12 +531,9 @@ public class ExprProcessor implements CodeConstants {
         case opc_athrow:
           exprlist.add(new ExitExprent(instr.opcode == opc_athrow ? ExitExprent.EXIT_THROW : ExitExprent.EXIT_RETURN,
                                        instr.opcode == opc_return ? null : stack.pop(),
-                                       instr.opcode == opc_athrow
-                                       ? null
-                                       : ((MethodDescriptor)DecompilerContext
-                                         .getProperty(DecompilerContext.CURRENT_METHOD_DESCRIPTOR)).ret,
+                                       instr.opcode == opc_athrow ? null : methodDescriptor.ret,
                                        bytecode_offsets));
-        break;
+          break;
         case opc_monitorenter:
         case opc_monitorexit:
           exprlist.add(new MonitorExprent(func8[instr.opcode - opc_monitorenter], stack.pop(), bytecode_offsets));
@@ -552,13 +547,15 @@ public class ExprProcessor implements CodeConstants {
         case opc_getstatic:
         case opc_getfield:
           pushEx(stack, exprlist,
-                 new FieldExprent(pool.getLinkConstant(instr.getOperand(0)), instr.opcode == opc_getstatic ? null : stack.pop(), bytecode_offsets));
+                 new FieldExprent(pool.getLinkConstant(instr.getOperand(0)), instr.opcode == opc_getstatic ? null : stack.pop(),
+                                  bytecode_offsets));
           break;
         case opc_putstatic:
         case opc_putfield:
           Exprent valfield = stack.pop();
           Exprent exprfield =
-            new FieldExprent(pool.getLinkConstant(instr.getOperand(0)), instr.opcode == opc_putstatic ? null : stack.pop(), bytecode_offsets);
+            new FieldExprent(pool.getLinkConstant(instr.getOperand(0)), instr.opcode == opc_putstatic ? null : stack.pop(),
+                             bytecode_offsets);
           exprlist.add(new AssignmentExprent(exprfield, valfield, bytecode_offsets));
           break;
         case opc_invokevirtual:
@@ -567,21 +564,14 @@ public class ExprProcessor implements CodeConstants {
         case opc_invokeinterface:
         case opc_invokedynamic:
           if (instr.opcode != opc_invokedynamic || instr.bytecode_version >= CodeConstants.BYTECODE_JAVA_7) {
-
             LinkConstant invoke_constant = pool.getLinkConstant(instr.getOperand(0));
-            int dynamic_invokation_type = -1;
 
+            List<PooledConstant> bootstrap_arguments = null;
             if (instr.opcode == opc_invokedynamic && bootstrap != null) {
-              List<PooledConstant> bootstrap_arguments = bootstrap.getMethodArguments(invoke_constant.index1);
-              if (bootstrap_arguments.size() > 1) { // INVOKEDYNAMIC is used not only for lambdas
-                PooledConstant link = bootstrap_arguments.get(1);
-                if (link instanceof LinkConstant) {
-                  dynamic_invokation_type = ((LinkConstant)link).index1;
-                }
-              }
+              bootstrap_arguments = bootstrap.getMethodArguments(invoke_constant.index1);
             }
 
-            InvocationExprent exprinv = new InvocationExprent(instr.opcode, invoke_constant, stack, dynamic_invokation_type, bytecode_offsets);
+            InvocationExprent exprinv = new InvocationExprent(instr.opcode, invoke_constant, bootstrap_arguments, stack, bytecode_offsets);
             if (exprinv.getDescriptor().ret.type == CodeConstants.TYPE_VOID) {
               exprlist.add(exprinv);
             }
@@ -762,7 +752,7 @@ public class ExprProcessor implements CodeConstants {
     return prlst;
   }
 
-  public static boolean endsWithSemikolon(Exprent expr) {
+  public static boolean endsWithSemicolon(Exprent expr) {
     int type = expr.type;
     return !(type == Exprent.EXPRENT_SWITCH ||
              type == Exprent.EXPRENT_MONITOR ||
@@ -775,7 +765,8 @@ public class ExprProcessor implements CodeConstants {
     if (stat instanceof BasicBlockStatement) {
       BasicBlock block = ((BasicBlockStatement)stat).getBlock();
       List<Integer> offsets = block.getInstrOldOffsets();
-      if (!offsets.isEmpty() && offsets.size() > block.getSeq().length()) { // some instructions have been deleted, but we still have offsets
+      if (!offsets.isEmpty() &&
+          offsets.size() > block.getSeq().length()) { // some instructions have been deleted, but we still have offsets
         tracer.addMapping(offsets.get(offsets.size() - 1)); // add the last offset
       }
     }
@@ -847,7 +838,7 @@ public class ExprProcessor implements CodeConstants {
         if (expr.type == Exprent.EXPRENT_MONITOR && ((MonitorExprent)expr).getMonType() == MonitorExprent.MONITOR_ENTER) {
           buf.append("{}"); // empty synchronized block
         }
-        if (endsWithSemikolon(expr)) {
+        if (endsWithSemicolon(expr)) {
           buf.append(";");
         }
         buf.appendLineSeparator();

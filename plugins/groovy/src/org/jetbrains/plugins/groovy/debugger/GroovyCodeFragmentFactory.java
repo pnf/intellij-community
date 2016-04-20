@@ -20,6 +20,7 @@ import com.intellij.debugger.engine.evaluation.TextWithImports;
 import com.intellij.debugger.engine.evaluation.expression.EvaluatorBuilder;
 import com.intellij.debugger.engine.evaluation.expression.EvaluatorBuilderImpl;
 import com.intellij.openapi.fileTypes.LanguageFileType;
+import com.intellij.openapi.project.DumbService;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.Pair;
 import com.intellij.openapi.util.TextRange;
@@ -43,6 +44,7 @@ import org.jetbrains.plugins.groovy.lang.psi.api.statements.GrVariable;
 import org.jetbrains.plugins.groovy.lang.psi.api.statements.blocks.GrClosableBlock;
 import org.jetbrains.plugins.groovy.lang.psi.api.statements.expressions.GrExpression;
 import org.jetbrains.plugins.groovy.lang.psi.api.statements.expressions.GrReferenceExpression;
+import org.jetbrains.plugins.groovy.lang.psi.api.statements.params.GrParameter;
 import org.jetbrains.plugins.groovy.lang.psi.api.statements.typedef.GrTraitTypeDefinition;
 import org.jetbrains.plugins.groovy.lang.psi.api.toplevel.imports.GrImportStatement;
 import org.jetbrains.plugins.groovy.lang.psi.api.types.GrCodeReferenceElement;
@@ -247,7 +249,7 @@ public class GroovyCodeFragmentFactory extends CodeFragmentFactory {
           return;
         }
 
-        if (resolved instanceof PsiLocalVariable || resolved instanceof PsiParameter) {
+        if (resolved instanceof PsiLocalVariable || resolved instanceof PsiParameter && !(resolved instanceof GrParameter)) {
           String name = referenceExpression.getReferenceName();
           parameters.put(name, name);
         }
@@ -334,16 +336,11 @@ public class GroovyCodeFragmentFactory extends CodeFragmentFactory {
 
   @Override
   public boolean isContextAccepted(PsiElement context) {
-    if (context != null) {
-      if (context.getLanguage().equals(GroovyLanguage.INSTANCE)) {
-        return true;
-      }
-      if (JavaPsiFacade.getInstance(context.getProject())
-            .findClass("org.codehaus.groovy.control.CompilationUnit", context.getResolveScope()) != null) {
-        return true;
-      }
-    }
-    return false;
+    if (context == null) return false;
+    if (context.getLanguage().equals(GroovyLanguage.INSTANCE)) return true;
+    Project project = context.getProject();
+    if (DumbService.isDumb(project)) return false;
+    return JavaPsiFacade.getInstance(project).findClass("org.codehaus.groovy.control.CompilationUnit", context.getResolveScope()) != null;
   }
 
   @NotNull

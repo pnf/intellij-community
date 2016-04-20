@@ -539,7 +539,7 @@ public abstract class AbstractInplaceIntroducer<V extends PsiNameIdentifierOwner
           final V localVariable = getLocalVariable();
           if (localVariable != null) {
             beforeData.addElement(localVariable);
-          } 
+          }
           else {
             final E beforeExpr = getBeforeExpr();
             if (beforeExpr != null) {

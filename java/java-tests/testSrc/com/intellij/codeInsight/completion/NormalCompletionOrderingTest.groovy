@@ -50,7 +50,7 @@ public class NormalCompletionOrderingTest extends CompletionSortingTestCase {
   }
 
   public void testDelegatingConstructorCall() {
-    checkPreferredItems 0, 'element', 'equals'
+    checkPreferredItems 0, 'element'
   }
 
   public void testPreferAnnotationMethods() throws Throwable {
@@ -435,6 +435,17 @@ interface TxANotAnno {}
     checkPreferredItems 0, 'reaction', 'rezet', 'return'
   }
 
+  public void testDispreferReturnInConstructor() {
+    checkPreferredItems 0, 'reaction', 'rezet', 'return'
+  }
+
+  public void testDispreferReturnInVoidMethodTopLevel() {
+    checkPreferredItems 0, 'reaction', 'rezet', 'return'
+  }
+  public void testDispreferReturnInVoidLambda() {
+    checkPreferredItems 0, 'reaction', 'rezet', 'return'
+  }
+
   public void testDoNotPreferGetClass() {
     checkPreferredItems 0, 'get', 'getClass'
     incUseCount(lookup, 1)
@@ -733,6 +744,10 @@ interface TxANotAnno {}
     p = LookupElementPresentation.renderElement(myFixture.lookup.items[1])
     assert p.tailText.contains('bar')
     assert p.strikeout
+  }
+
+  public void testPreferClassKeywordWhenExpectedClassType() {
+    checkPreferredItems 0, 'class'
   }
 
 }

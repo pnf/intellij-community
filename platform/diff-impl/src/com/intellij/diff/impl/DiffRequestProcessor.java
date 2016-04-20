@@ -38,7 +38,9 @@ import com.intellij.internal.statistic.UsageTrigger;
 import com.intellij.internal.statistic.beans.ConvertUsagesUtil;
 import com.intellij.openapi.Disposable;
 import com.intellij.openapi.actionSystem.*;
+import com.intellij.openapi.actionSystem.ex.ActionUtil;
 import com.intellij.openapi.actionSystem.ex.ComboBoxAction;
+import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.editor.Editor;
 import com.intellij.openapi.editor.LogicalPosition;
@@ -246,6 +248,7 @@ public abstract class DiffRequestProcessor implements Disposable {
 
   @CalledInAwt
   protected void applyRequest(@NotNull DiffRequest request, boolean force, @Nullable ScrollToPolicy scrollToChangePolicy) {
+    ApplicationManager.getApplication().assertIsDispatchThread();
     myIterationState = IterationState.NONE;
 
     force = force || (myQueuedApplyRequest != null && myQueuedApplyRequest.force);
@@ -274,7 +277,7 @@ public abstract class DiffRequestProcessor implements Disposable {
     myToolbarStatusPanel.setContent(null);
     myToolbarPanel.setContent(null);
     myContentPanel.setContent(null);
-    myMainPanel.putClientProperty(AnAction.ourClientProperty, null);
+    ActionUtil.clearActions(myMainPanel);
 
     myActiveRequest.onAssigned(false);
     myActiveRequest = request;

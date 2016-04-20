@@ -20,13 +20,12 @@ import com.google.common.annotations.VisibleForTesting;
 import com.intellij.injected.editor.DocumentWindow;
 import com.intellij.lang.injection.InjectedLanguageManager;
 import com.intellij.openapi.Disposable;
-import com.intellij.openapi.application.Application;
-import com.intellij.openapi.application.ApplicationManager;
-import com.intellij.openapi.application.ModalityState;
+import com.intellij.openapi.application.*;
 import com.intellij.openapi.application.impl.ApplicationInfoImpl;
 import com.intellij.openapi.components.ProjectComponent;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.editor.Document;
+import com.intellij.openapi.editor.DocumentRunnable;
 import com.intellij.openapi.editor.event.DocumentAdapter;
 import com.intellij.openapi.editor.event.DocumentEvent;
 import com.intellij.openapi.editor.event.DocumentListener;
@@ -37,8 +36,6 @@ import com.intellij.openapi.editor.impl.EditorDocumentPriorities;
 import com.intellij.openapi.editor.impl.FrozenDocument;
 import com.intellij.openapi.editor.impl.event.RetargetRangeMarkers;
 import com.intellij.openapi.fileEditor.FileDocumentManager;
-import com.intellij.openapi.progress.ProgressIndicator;
-import com.intellij.openapi.progress.ProgressManager;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.roots.FileIndexFacade;
 import com.intellij.openapi.util.*;
@@ -52,6 +49,7 @@ import com.intellij.util.*;
 import com.intellij.util.concurrency.Semaphore;
 import com.intellij.util.containers.ContainerUtil;
 import com.intellij.util.messages.MessageBus;
+import com.intellij.util.ui.UIUtil;
 import org.jetbrains.annotations.NonNls;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -153,6 +151,7 @@ public abstract class PsiDocumentManagerBase extends PsiDocumentManager implemen
     return ((PsiManagerEx)myPsiManager).getFileManager().findCachedViewProvider(virtualFile);
   }
 
+  @Nullable
   private static VirtualFile getVirtualFile(@NotNull Document document) {
     final VirtualFile virtualFile = FileDocumentManager.getInstance().getFile(document);
     if (virtualFile == null || !virtualFile.isValid()) return null;
@@ -215,6 +214,11 @@ public abstract class PsiDocumentManagerBase extends PsiDocumentManager implemen
   @Override
   public void commitAllDocuments() {
     ApplicationManager.getApplication().assertIsDispatchThread();
+    if (!((TransactionGuardImpl)TransactionGuard.getInstance()).isWriteActionAllowed()) {
+      // please assign exceptions here to Peter
+      LOG.error("Write access is not allowed in this context, see TransactionGuard documentation for details");
+    }
+
     if (myUncommittedDocuments.isEmpty()) return;
 
     final Document[] documents = getUncommittedDocuments();
@@ -261,7 +265,7 @@ public abstract class PsiDocumentManagerBase extends PsiDocumentManager implemen
       return true;
     }
     if (myUncommittedDocuments.isEmpty()) {
-      if (!ApplicationManager.getApplication().hasWriteAction(CommitToPsiFileAction.class)) {
+      if (!isCommitInProgress()) {
         // in case of fireWriteActionFinished() we didn't execute 'actionsWhenAllDocumentsAreCommitted' yet
         assert actionsWhenAllDocumentsAreCommitted.isEmpty() : actionsWhenAllDocumentsAreCommitted;
       }
@@ -287,6 +291,11 @@ public abstract class PsiDocumentManagerBase extends PsiDocumentManager implemen
 
   @Override
   public void commitDocument(@NotNull final Document doc) {
+    if (!((TransactionGuardImpl)TransactionGuard.getInstance()).isWriteActionAllowed()) {
+      // please assign exceptions here to Peter
+      LOG.error("Write access is not allowed in this context, see TransactionGuard documentation for details");
+    }
+
     final Document document = doc instanceof DocumentWindow ? ((DocumentWindow)doc).getDelegate() : doc;
     if (!isCommitted(document)) {
       doCommit(document);
@@ -300,12 +309,18 @@ public abstract class PsiDocumentManagerBase extends PsiDocumentManager implemen
                               @NotNull final Object reason) {
     assert !myProject.isDisposed() : "Already disposed";
     final boolean[] ok = {true};
-    ApplicationManager.getApplication().runWriteAction(new CommitToPsiFileAction(document, myProject) {
+    Runnable runnable = new DocumentRunnable(document, myProject) {
       @Override
       public void run() {
         ok[0] = finishCommitInWriteAction(document, finishProcessors, synchronously);
       }
-    });
+    };
+    if (synchronously) {
+      runnable.run();
+    }
+    else {
+      ApplicationManager.getApplication().runWriteAction(runnable);
+    }
 
     if (ok[0]) {
       // otherwise changes maybe not synced to the document yet, and injectors will crash
@@ -408,12 +423,20 @@ public abstract class PsiDocumentManagerBase extends PsiDocumentManager implemen
       }
     };
 
-    if (Boolean.TRUE.equals(psiFile.getViewProvider().getVirtualFile().getUserData(SingleRootFileViewProvider.FREE_THREADED))) {
+    if (isFreeThreaded(psiFile.getViewProvider().getVirtualFile())) {
       runnable.run();
     }
     else {
       ApplicationManager.getApplication().runWriteAction(runnable);
     }
+  }
+
+  static boolean isFreeThreaded(@NotNull VirtualFile file) {
+    return Boolean.TRUE.equals(file.getUserData(SingleRootFileViewProvider.FREE_THREADED));
+  }
+
+  public boolean isCommitInProgress() {
+    return myIsCommitInProgress;
   }
 
   @Override
@@ -460,21 +483,14 @@ public abstract class PsiDocumentManagerBase extends PsiDocumentManager implemen
             else {
               s1.down();
               s2.down();
-              final Runnable commitRunnable = new Runnable() {
+              TransactionGuard.submitTransaction(myProject, new Runnable() {
                 @Override
                 public void run() {
                   commitAllDocuments();
                   s1.up();
                   s2.waitFor();
                 }
-              };
-              final ProgressIndicator progressIndicator = ProgressManager.getInstance().getProgressIndicator();
-              if (progressIndicator == null) {
-                ApplicationManager.getApplication().invokeLater(commitRunnable);
-              }
-              else {
-                ApplicationManager.getApplication().invokeLater(commitRunnable, progressIndicator.getModalityState());
-              }
+              });
             }
           }
         }
@@ -527,6 +543,34 @@ public abstract class PsiDocumentManagerBase extends PsiDocumentManager implemen
       }
     }
     return false;
+  }
+
+  @Override
+  public void performLaterWhenAllCommitted(@NotNull final Runnable runnable) {
+    final ModalityState modalityState = ModalityState.current();
+    UIUtil.invokeLaterIfNeeded(new Runnable() {
+      @Override
+      public void run() {
+        performWhenAllCommitted(new Runnable() {
+          @Override
+          public void run() {
+            // later because we may end up in write action here if there was a synchronous commit
+            ApplicationManager.getApplication().invokeLater(new Runnable() {
+              @Override
+              public void run() {
+                if (hasUncommitedDocuments()) {
+                  // no luck, will try later
+                  performLaterWhenAllCommitted(runnable);
+                }
+                else {
+                  runnable.run();
+                }
+              }
+            }, modalityState, myProject.getDisposed());
+          }
+        });
+      }
+    });
   }
 
   private static class CompositeRunnable extends ArrayList<Runnable> implements Runnable {

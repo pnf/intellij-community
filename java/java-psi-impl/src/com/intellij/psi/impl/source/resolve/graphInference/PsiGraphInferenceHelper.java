@@ -117,7 +117,8 @@ public class PsiGraphInferenceHelper implements PsiInferenceHelper {
       leftTypes = new PsiType[] {arg};
       rightTypes = new PsiType[]{param};
     }
-    final InferenceSession inferenceSession = new InferenceSession(new PsiTypeParameter[]{typeParam}, leftTypes, rightTypes, PsiSubstitutor.EMPTY, myManager, null);
+    final PsiTypeParameter[] typeParams = new PsiTypeParameter[] {typeParam};
+    final InferenceSession inferenceSession = new InferenceSession(typeParams, leftTypes, rightTypes, PsiSubstitutor.EMPTY, myManager, null);
     if (inferenceSession.isProperType(inferenceSession.substituteWithInferenceVariables(param)) &&
         inferenceSession.isProperType(inferenceSession.substituteWithInferenceVariables(arg))) {
       boolean proceed = false;

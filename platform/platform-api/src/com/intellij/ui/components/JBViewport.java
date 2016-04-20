@@ -124,7 +124,7 @@ public class JBViewport extends JViewport implements ZoomableViewport {
     if (!myBackgroundRequested && EventQueue.isDispatchThread() && Registry.is("ide.scroll.background.auto")) {
       if (!isBackgroundSet() || color instanceof UIResource) {
         Component child = getView();
-        if (child != null) {
+        if (child != null && child.isOpaque()) {
           try {
             myBackgroundRequested = true;
             return child.getBackground();
@@ -364,7 +364,7 @@ public class JBViewport extends JViewport implements ZoomableViewport {
               if (va == Alignment.LEFT) {
                 insets.left += vsb.getWidth();
               }
-              else if (va == Alignment.RIGHT && !SystemInfo.isMac) {
+              else if (va == Alignment.RIGHT && isAlignmentNeeded(view)) {
                 insets.right += vsb.getWidth();
               }
             }
@@ -375,13 +375,17 @@ public class JBViewport extends JViewport implements ZoomableViewport {
               if (ha == Alignment.TOP) {
                 insets.top += hsb.getHeight();
               }
-              else if (ha == Alignment.BOTTOM && !SystemInfo.isMac) {
+              else if (ha == Alignment.BOTTOM && isAlignmentNeeded(view)) {
                 insets.bottom += hsb.getHeight();
               }
             }
           }
         }
       }
+    }
+
+    private boolean isAlignmentNeeded(JComponent view) {
+      return !SystemInfo.isMac && (view instanceof JList || view instanceof JTree || Registry.is("ide.scroll.align.component"));
     }
   }
 }

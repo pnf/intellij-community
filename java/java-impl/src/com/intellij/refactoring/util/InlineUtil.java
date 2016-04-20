@@ -23,7 +23,6 @@ import com.intellij.openapi.util.Comparing;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.psi.*;
 import com.intellij.psi.codeStyle.JavaCodeStyleManager;
-import com.intellij.psi.impl.PsiDiamondTypeUtil;
 import com.intellij.psi.search.LocalSearchScope;
 import com.intellij.psi.search.searches.ReferencesSearch;
 import com.intellij.psi.tree.IElementType;
@@ -72,6 +71,10 @@ public class InlineUtil {
 
     ChangeContextUtil.encodeContextInfo(initializer, false);
     PsiExpression expr = (PsiExpression)replaceDiamondWithInferredTypesIfNeeded(initializer, ref);
+
+    PsiThisExpression thisAccessExpr = createThisExpression(manager, thisClass, refParent);
+
+    expr = (PsiExpression)ChangeContextUtil.decodeContextInfo(expr, thisClass, thisAccessExpr);
     PsiType exprType = expr.getType();
     if (exprType != null && (!varType.equals(exprType) && (varType instanceof PsiPrimitiveType || exprType instanceof PsiPrimitiveType)
                              || !TypeConversionUtil.isAssignable(varType, exprType)
@@ -164,9 +167,7 @@ public class InlineUtil {
 
     ChangeContextUtil.clearContextInfo(initializer);
 
-    PsiThisExpression thisAccessExpr = createThisExpression(manager, thisClass, refParent);
-
-    return (PsiExpression)ChangeContextUtil.decodeContextInfo(expr, thisClass, thisAccessExpr);
+    return expr;
   }
 
   private static PsiExpression surroundWithCast(PsiVariable variable, PsiExpression expr, PsiExpression expression) {
@@ -293,6 +294,11 @@ public class InlineUtil {
   }
 
   private static boolean isSafeToFlatten(PsiCall callExpression, PsiMethod oldRefMethod, PsiExpression[] arrayElements) {
+    for (PsiExpression arrayElement : arrayElements) {
+      if (arrayElement instanceof PsiArrayInitializerExpression) {
+        return false;
+      }
+    }
     PsiCall copy = (PsiCall)callExpression.copy();
     PsiExpressionList copyArgumentList = copy.getArgumentList();
     LOG.assertTrue(copyArgumentList != null);
@@ -385,7 +391,7 @@ public class InlineUtil {
 
   private static PsiElement replaceDiamondWithInferredTypesIfNeeded(PsiExpression initializer, PsiElement ref) {
     if (initializer instanceof PsiNewExpression) {
-      final PsiDiamondType diamondType = PsiDiamondTypeUtil.getDiamondType((PsiNewExpression)initializer);
+      final PsiDiamondType diamondType = PsiDiamondType.getDiamondType((PsiNewExpression)initializer);
       if (diamondType != null) {
         final PsiDiamondType.DiamondInferenceResult inferenceResult = diamondType.resolveInferredTypes();
         if (inferenceResult.getErrorMessage() == null) {

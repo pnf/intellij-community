@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2015 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -121,7 +121,7 @@ public class ConsoleViewImplTest extends LightPlatformTestCase {
       UIUtil.dispatchAllInvocationEvents(); // flush 2-nd clear request
       while (console.hasDeferredOutput()) {
         UIUtil.dispatchAllInvocationEvents();
-        TimeoutUtil.sleep(5);
+        TimeoutUtil.sleep(1);
       }
       assertEquals("Test", console.getText());
     }
@@ -155,7 +155,7 @@ public class ConsoleViewImplTest extends LightPlatformTestCase {
   }
 
   @NotNull
-  private static ConsoleViewImpl createConsole() {
+  static ConsoleViewImpl createConsole() {
     Project project = getProject();
     ConsoleViewImpl console = new ConsoleViewImpl(project,
                                                   GlobalSearchScope.allScope(project),
@@ -168,7 +168,7 @@ public class ConsoleViewImplTest extends LightPlatformTestCase {
     return console;
   }
 
-  private static class MyProcessHandler extends ProcessHandler {
+  static class MyProcessHandler extends ProcessHandler {
     @Override
     protected void destroyProcessImpl() {
       notifyProcessTerminated(0);

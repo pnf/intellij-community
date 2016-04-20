@@ -15,6 +15,7 @@
  */
 package com.intellij.util.io;
 
+import com.intellij.Patches;
 import com.intellij.ide.IdeBundle;
 import com.intellij.openapi.application.Application;
 import com.intellij.openapi.application.ApplicationInfo;
@@ -29,6 +30,7 @@ import com.intellij.util.ArrayUtil;
 import com.intellij.util.lang.UrlClassLoader;
 import com.intellij.util.net.HttpConfigurable;
 import com.intellij.util.net.NetUtils;
+import com.intellij.util.net.ssl.CertificateManager;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -351,15 +353,15 @@ public final class HttpRequests {
   }
 
   private static <T> T process(RequestBuilderImpl builder, RequestProcessor<T> processor) throws IOException {
-    if (!UrlClassLoader.PARALLEL_CAPABLE) {
+    ClassLoader contextLoader = Thread.currentThread().getContextClassLoader();
+    if (Patches.JDK_BUG_ID_8032832 && !UrlClassLoader.isRegisteredAsParallelCapable(contextLoader)) {
       // hack-around for class loader lock in sun.net.www.protocol.http.NegotiateAuthentication (IDEA-131621)
-      ClassLoader oldClassLoader = Thread.currentThread().getContextClassLoader();
-      try (URLClassLoader cl = new URLClassLoader(new URL[0], oldClassLoader)) {
+      try (URLClassLoader cl = new URLClassLoader(new URL[0], contextLoader)) {
         Thread.currentThread().setContextClassLoader(cl);
         return doProcess(builder, processor);
       }
       finally {
-        Thread.currentThread().setContextClassLoader(oldClassLoader);
+        Thread.currentThread().setContextClassLoader(contextLoader);
       }
     }
     else {
@@ -396,6 +398,10 @@ public final class HttpRequests {
     for (int i = 0; i < builder.myRedirectLimit; i++) {
       if (builder.myForceHttps && StringUtil.startsWith(url, "http:")) {
         url = "https:" + url.substring(5);
+      }
+
+      if (url.startsWith("https:") && ApplicationManager.getApplication() != null) {
+        CertificateManager.getInstance();
       }
 
       URLConnection connection;

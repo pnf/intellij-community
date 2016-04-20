@@ -35,6 +35,7 @@ import com.jetbrains.python.console.PythonDebugLanguageConsoleView;
 import com.jetbrains.python.debugger.PyDebugProcess;
 import com.jetbrains.python.debugger.PyDebugRunner;
 import com.jetbrains.python.debugger.PyLineBreakpointType;
+import com.jetbrains.python.debugger.PyRunCythonExtensionsFilter;
 import com.jetbrains.python.run.PythonCommandLineState;
 import com.jetbrains.python.run.PythonRunConfiguration;
 import com.jetbrains.python.run.PythonTracebackFilter;
@@ -140,6 +141,7 @@ public class PyEduDebugRunner extends PyDebugRunner {
     view.attachToProcess(processHandler);
     view.addMessageFilter(new PythonTracebackFilter(project));
     view.addMessageFilter(new UrlFilter());
+    view.addMessageFilter(new PyRunCythonExtensionsFilter(project));
 
     view.enableConsole(false);
 
@@ -150,6 +152,22 @@ public class PyEduDebugRunner extends PyDebugRunner {
     eduConsole.setCloseable(false);
     ui.addContent(eduConsole, 0, PlaceInGrid.right, false);
 
+    Presentation presentation = view.getSwitchConsoleActionPresentation();
+    ToggleAction action = new ToggleAction(presentation.getText(), presentation.getDescription(), presentation.getIcon()) {
+
+      @Override
+      public boolean isSelected(AnActionEvent e) {
+        return !view.isPrimaryConsoleEnabled();
+      }
+
+      @Override
+      public void setSelected(AnActionEvent e, boolean state) {
+        view.enableConsole(!state);
+      }
+    };
+
+    eduConsole.setActions(new DefaultActionGroup(action), ActionPlaces.DEBUGGER_TOOLBAR,
+                          view.getPreferredFocusableComponent());
     PyDebugProcess process = (PyDebugProcess)session.getDebugProcess();
     PyDebugRunner.initDebugConsoleView(project, process, view, processHandler, session);
 

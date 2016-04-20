@@ -15,6 +15,7 @@
  */
 package com.intellij.util.io;
 
+import com.intellij.openapi.Disposable;
 import com.intellij.openapi.Forceable;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.util.SystemInfo;
@@ -22,7 +23,6 @@ import com.intellij.util.SystemProperties;
 import com.intellij.util.containers.ConcurrentIntObjectMap;
 import com.intellij.util.containers.ContainerUtil;
 import com.intellij.util.containers.hash.LinkedHashMap;
-import jsr166e.extra.SequenceLock;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -35,6 +35,7 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.*;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * @author max
@@ -486,10 +487,10 @@ public class PagedFileStorage implements Forceable {
     private final ConcurrentIntObjectMap<PagedFileStorage> myIndex2Storage = ContainerUtil.createConcurrentIntObjectMap();
 
     private final LinkedHashMap<Integer, ByteBufferWrapper> mySegments;
-    private final SequenceLock mySegmentsAccessLock = new SequenceLock(); // protects map operations of mySegments, needed for LRU order, mySize and myMappingChangeCount
+    private final ReentrantLock mySegmentsAccessLock = new ReentrantLock(); // protects map operations of mySegments, needed for LRU order, mySize and myMappingChangeCount
     // todo avoid locking for access
 
-    private final SequenceLock mySegmentsAllocationLock = new SequenceLock();
+    private final ReentrantLock mySegmentsAllocationLock = new ReentrantLock();
     private final ConcurrentLinkedQueue<ByteBufferWrapper> mySegmentsToRemove = new ConcurrentLinkedQueue<ByteBufferWrapper>();
     private volatile long mySize;
     private volatile long mySizeLimit;
@@ -751,8 +752,18 @@ public class PagedFileStorage implements Forceable {
       if (buffers != null) {
         mySegmentsAllocationLock.lock();
         try {
+          Disposable fileContext = null;
           for(ByteBufferWrapper buffer:buffers.values()) {
-            buffer.flush();
+            if (buffer instanceof ReadWriteDirectBufferWrapper) {
+              fileContext = ((ReadWriteDirectBufferWrapper)buffer).flushWithContext(fileContext);
+            } else {
+              buffer.flush();
+            }
+          }
+
+          if (fileContext != null) {
+            //noinspection SSBasedInspection
+            fileContext.dispose();
           }
         }
         finally {
@@ -780,7 +791,7 @@ public class PagedFileStorage implements Forceable {
 
   public static class StorageLockContext {
     private final boolean myCheckThreadAccess;
-    private final SequenceLock myLock;
+    private final ReentrantLock myLock;
     private final StorageLock myStorageLock;
 
     @Deprecated
@@ -789,7 +800,7 @@ public class PagedFileStorage implements Forceable {
     }
 
     private StorageLockContext(StorageLock lock, boolean checkAccess) {
-      myLock = new SequenceLock();
+      myLock = new ReentrantLock();
       myStorageLock = lock;
       myCheckThreadAccess = checkAccess;
     }

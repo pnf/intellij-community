@@ -25,15 +25,16 @@ import com.intellij.openapi.wm.ToolWindow;
 import com.intellij.openapi.wm.ToolWindowAnchor;
 import com.intellij.openapi.wm.ToolWindowManager;
 import com.intellij.util.containers.hash.HashMap;
-import com.jetbrains.edu.EduNames;
-import com.jetbrains.edu.EduUtils;
-import com.jetbrains.edu.courseFormat.Course;
-import com.jetbrains.edu.courseFormat.Lesson;
-import com.jetbrains.edu.courseFormat.Task;
-import com.jetbrains.edu.courseFormat.TaskFile;
-import com.jetbrains.edu.learning.actions.*;
+import com.jetbrains.edu.learning.actions.StudyToolbarAction;
+import com.jetbrains.edu.learning.core.EduNames;
+import com.jetbrains.edu.learning.core.EduUtils;
+import com.jetbrains.edu.learning.courseFormat.Course;
+import com.jetbrains.edu.learning.courseFormat.Lesson;
+import com.jetbrains.edu.learning.courseFormat.Task;
+import com.jetbrains.edu.learning.courseFormat.TaskFile;
 import com.jetbrains.edu.learning.editor.StudyEditorFactoryListener;
 import com.jetbrains.edu.learning.ui.StudyProgressToolWindowFactory;
+import com.jetbrains.edu.learning.ui.StudyToolWindow;
 import com.jetbrains.edu.learning.ui.StudyToolWindowFactory;
 import javafx.application.Platform;
 import org.jetbrains.annotations.NotNull;
@@ -51,8 +52,6 @@ public class StudyProjectComponent implements ProjectComponent {
   private static final Logger LOG = Logger.getInstance(StudyProjectComponent.class.getName());
   private final Project myProject;
   private FileCreatedByUserListener myListener;
-  // Shows could we use JavaFX Task Description panel or should use Swing
-  private boolean useJavaFx = true;
   private Map<Keymap, List<Pair<String, String>>> myDeletedShortcuts = new HashMap<Keymap, List<Pair<String, String>>>();
   private StudyProjectComponent(@NotNull final Project project) {
     myProject = project;
@@ -62,11 +61,8 @@ public class StudyProjectComponent implements ProjectComponent {
   public void projectOpened() {
     final Course course = StudyTaskManager.getInstance(myProject).getCourse();
     // Check if user has javafx lib in his JDK. Now bundled JDK doesn't have this lib inside.
-    try {
+    if (StudyUtils.hasJavaFx()) {
       Platform.setImplicitExit(false);
-    }
-    catch (NoClassDefFoundError e) {
-      useJavaFx = false;
     }
 
     if (course != null && !course.isUpToDate()) {
@@ -102,20 +98,31 @@ public class StudyProjectComponent implements ProjectComponent {
         studyToolWindow.show(null);
       }
       if (progressToolWindow != null) {
-        StudyUtils.updateToolWindows(myProject);
+        StudyUtils.initToolWindows(myProject);
         progressToolWindow.show(null);
       }
     }
   }
 
   private void registerShortcuts() {
-    addShortcut(StudyNextWindowAction.ACTION_ID, new String[]{StudyNextWindowAction.SHORTCUT, StudyNextWindowAction.SHORTCUT2});
-    addShortcut(StudyPrevWindowAction.ACTION_ID, new String[]{StudyPrevWindowAction.SHORTCUT});
-    addShortcut(StudyShowHintAction.ACTION_ID, new String[]{StudyShowHintAction.SHORTCUT});
-    addShortcut(StudyCheckAction.ACTION_ID, new String[]{StudyCheckAction.SHORTCUT});
-    addShortcut(StudyNextStudyTaskAction.ACTION_ID, new String[]{StudyNextStudyTaskAction.SHORTCUT});
-    addShortcut(StudyPreviousStudyTaskAction.ACTION_ID, new String[]{StudyPreviousStudyTaskAction.SHORTCUT});
-    addShortcut(StudyRefreshTaskFileAction.ACTION_ID, new String[]{StudyRefreshTaskFileAction.SHORTCUT});
+    StudyToolWindow window = StudyUtils.getStudyToolWindow(myProject);
+    if (window != null) {
+      List<AnAction> actionsOnToolbar = window.getActions(true);
+      if (actionsOnToolbar != null) {
+        for (AnAction action : actionsOnToolbar) {
+          if (action instanceof StudyToolbarAction) {
+            String id = ((StudyToolbarAction)action).getActionId();
+            String[] shortcuts = ((StudyToolbarAction)action).getShortcuts();
+            if (shortcuts != null) {
+              addShortcut(id, shortcuts);
+            }
+          }
+        }
+      }
+      else {
+        LOG.warn("Actions on toolbar are nulls");
+      }
+    }
   }
 
   private void registerToolWindows(@NotNull final ToolWindowManager toolWindowManager) {
@@ -271,10 +278,6 @@ public class StudyProjectComponent implements ProjectComponent {
   public static StudyProjectComponent getInstance(@NotNull final Project project) {
     final Module module = ModuleManager.getInstance(project).getModules()[0];
     return module.getComponent(StudyProjectComponent.class);
-  }
-
-  public boolean useJavaFx() {
-    return useJavaFx;
   }
 
   private class FileCreatedByUserListener extends VirtualFileAdapter {

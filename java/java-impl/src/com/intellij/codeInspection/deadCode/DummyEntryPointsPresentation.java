@@ -82,7 +82,12 @@ public class DummyEntryPointsPresentation extends UnusedDeclarationPresentation 
 
   @Override
   @NotNull
-  public HTMLComposerImpl getComposer() {
+  public DeadHTMLComposer getComposer() {
     return new DeadHTMLComposer(this);
+  }
+
+  @Override
+  public boolean isDummy() {
+    return true;
   }
 }

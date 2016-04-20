@@ -18,11 +18,9 @@ package com.intellij.openapi.project;
 import com.intellij.ide.IdeBundle;
 import com.intellij.ide.startup.StartupManagerEx;
 import com.intellij.openapi.Disposable;
-import com.intellij.openapi.application.AccessToken;
-import com.intellij.openapi.application.Application;
-import com.intellij.openapi.application.ApplicationManager;
-import com.intellij.openapi.application.ModalityState;
+import com.intellij.openapi.application.*;
 import com.intellij.openapi.components.ServiceManager;
+import com.intellij.openapi.diagnostic.Attachment;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.fileEditor.ex.FileEditorManagerEx;
 import com.intellij.openapi.progress.*;
@@ -36,6 +34,7 @@ import com.intellij.openapi.wm.WindowManager;
 import com.intellij.openapi.wm.ex.ProgressIndicatorEx;
 import com.intellij.openapi.wm.ex.StatusBarEx;
 import com.intellij.ui.AppIcon;
+import com.intellij.util.ExceptionUtil;
 import com.intellij.util.concurrency.Semaphore;
 import com.intellij.util.containers.ContainerUtil;
 import com.intellij.util.containers.Queue;
@@ -61,6 +60,8 @@ public class DumbServiceImpl extends DumbService implements Disposable, Modifica
   private static Throwable ourForcedTrace;
   private volatile boolean myDumb = false;
   private volatile Throwable myDumbStart;
+  private volatile TransactionId myDumbStartTransaction;
+  private boolean myUpdateFinishedQueued;
   private final DumbModeListener myPublisher;
   private long myModificationCount;
   private final Queue<DumbModeTask> myUpdatesQueue = new Queue<DumbModeTask>(5);
@@ -83,11 +84,6 @@ public class DumbServiceImpl extends DumbService implements Disposable, Modifica
   @SuppressWarnings({"MethodOverridesStaticMethodOfSuperclass"})
   public static DumbServiceImpl getInstance(@NotNull Project project) {
     return (DumbServiceImpl)DumbService.getInstance(project);
-  }
-
-  @Override
-  public void queueTask(@NotNull final DumbModeTask task) {
-    scheduleCacheUpdate(task, true);
   }
 
   @Override
@@ -161,15 +157,16 @@ public class DumbServiceImpl extends DumbService implements Disposable, Modifica
     runnable.run();
   }
 
-  private void scheduleCacheUpdate(@NotNull final DumbModeTask task, boolean forceDumbMode) {
+  @Override
+  public void queueTask(@NotNull final DumbModeTask task) {
+    TransactionId contextTransaction = TransactionGuard.getInstance().getContextTransaction();
+
     final Throwable trace = ourForcedTrace != null ? ourForcedTrace : new Throwable(); // please report exceptions here to peter
     final DumbModePermission schedulerPermission = getExplicitPermission();
     if (LOG.isDebugEnabled()) LOG.debug("Scheduling task " + task, trace);
     final Application application = ApplicationManager.getApplication();
 
-    if (application.isUnitTestMode() ||
-        application.isHeadlessEnvironment() ||
-        !forceDumbMode && !myDumb && application.isReadAccessAllowed()) {
+    if (application.isUnitTestMode() || application.isHeadlessEnvironment()) {
       final ProgressIndicator indicator = ProgressManager.getInstance().getProgressIndicator();
       if (indicator != null) {
         indicator.pushState();
@@ -188,7 +185,7 @@ public class DumbServiceImpl extends DumbService implements Disposable, Modifica
       return;
     }
 
-    UIUtil.invokeLaterIfNeeded(new Runnable() {
+    Runnable runnable = new Runnable() {
       @Override
       public void run() {
         if (myProject.isDisposed()) {
@@ -212,7 +209,7 @@ public class DumbServiceImpl extends DumbService implements Disposable, Modifica
             LOG.info("Dumb mode not permitted in modal environment; see DumbService.allowStartingDumbModeInside documentation", trace);
           }
           else if (permission == DumbModePermission.MAY_START_MODAL) {
-            LOG.info("Starting modal dumb mode, caused by the following trace", trace);
+            LOG.debug("Starting modal dumb mode, caused by the following trace", trace);
           }
 
           // always change dumb status inside write action.
@@ -224,12 +221,15 @@ public class DumbServiceImpl extends DumbService implements Disposable, Modifica
                 myDumb = true;
               }
               myDumbStart = trace;
+              myDumbStartTransaction = contextTransaction;
               myModificationCount++;
-              try {
-                myPublisher.enteredDumbMode();
-              }
-              catch (Throwable e) {
-                LOG.error(e);
+              if (!myUpdateFinishedQueued) {
+                try {
+                  myPublisher.enteredDumbMode();
+                }
+                catch (Throwable e) {
+                  LOG.error(e);
+                }
               }
             }
           });
@@ -244,14 +244,20 @@ public class DumbServiceImpl extends DumbService implements Disposable, Modifica
                 startBackgroundProcess(modal);
               }
               catch (Throwable e) {
-                updateFinished(modal);
+                queueUpdateFinished(modal);
                 LOG.error("Failed to start background index update task", e);
               }
             }
           }, ModalityState.any(), myProject.getDisposed());
         }
       }
-    });
+    };
+    if (application.isDispatchThread()) {
+      runnable.run();
+    } else {
+      //noinspection SSBasedInspection
+      SwingUtilities.invokeLater(() -> TransactionGuard.submitTransaction(myProject, runnable));
+    }
   }
 
   @Nullable
@@ -287,7 +293,14 @@ public class DumbServiceImpl extends DumbService implements Disposable, Modifica
     };
   }
 
+  private void queueUpdateFinished(boolean modal) {
+    if (myUpdateFinishedQueued) return;
+    myUpdateFinishedQueued = true;
+    TransactionGuard.submitTransaction(myProject, () -> WriteAction.run(() -> updateFinished(modal)));
+  }
+
   private void updateFinished(boolean modal) {
+    myUpdateFinishedQueued = false;
     synchronized (myRunWhenSmartQueue) {
       myDumb = false;
     }
@@ -324,6 +337,9 @@ public class DumbServiceImpl extends DumbService implements Disposable, Modifica
         }
         try {
           runnable.run();
+        }
+        catch (ProcessCanceledException e) {
+          LOG.error("Task canceled: " + runnable, new Attachment("pce.trace", ExceptionUtil.getThrowableText(e)));
         }
         catch (Throwable e) {
           LOG.error("Error executing task " + runnable, e);
@@ -395,25 +411,16 @@ public class DumbServiceImpl extends DumbService implements Disposable, Modifica
 
   @Override
   public void smartInvokeLater(@NotNull final Runnable runnable) {
-    ApplicationManager.getApplication().invokeLater(new Runnable() {
-      @Override
-      public void run() {
-        runWhenSmart(runnable);
-      }
-
-      @Override
-      public String toString() {
-        return runnable.toString();
-      }
-    }, myProject.getDisposed());
+    smartInvokeLater(runnable, ModalityState.defaultModalityState());
   }
 
   @Override
   public void smartInvokeLater(@NotNull final Runnable runnable, @NotNull ModalityState modalityState) {
-    ApplicationManager.getApplication().invokeLater(new Runnable() {
-      @Override
-      public void run() {
-        runWhenSmart(runnable);
+    ApplicationManager.getApplication().invokeLater(() -> {
+      if (isDumb()) {
+        runWhenSmart(() -> smartInvokeLater(runnable, modalityState));
+      } else {
+        runnable.run();
       }
     }, modalityState, myProject.getDisposed());
   }
@@ -508,7 +515,7 @@ public class DumbServiceImpl extends DumbService implements Disposable, Modifica
 
         while (true) {
           if (myUpdatesQueue.isEmpty()) {
-            updateFinished(modal);
+            queueUpdateFinished(modal);
             return;
           }
 
@@ -527,19 +534,29 @@ public class DumbServiceImpl extends DumbService implements Disposable, Modifica
     return result.get();
   }
 
-  private static void invokeAndWaitIfNeeded(Runnable runnable) {
-    if (ApplicationManager.getApplication().isDispatchThread()) {
+  private void invokeAndWaitIfNeeded(Runnable runnable) {
+    Application app = ApplicationManager.getApplication();
+    if (app.isDispatchThread()) {
       runnable.run();
+      return;
     }
-    else {
-      try {
-        SwingUtilities.invokeAndWait(runnable);
-      }
-      catch (InterruptedException ignore) {
-      }
-      catch (Exception e) {
-        LOG.error(e);
-      }
+
+    Semaphore semaphore = new Semaphore();
+    semaphore.down();
+    //todo remove invokeLater when transactions are executed in "any" modality state
+    //noinspection SSBasedInspection
+    SwingUtilities.invokeLater(
+      () -> TransactionGuard.getInstance().submitTransaction(app, myDumbStartTransaction, () -> {
+        try {
+          runnable.run();
+        } finally {
+          semaphore.up();
+        }
+      }));
+    try {
+      semaphore.waitFor();
+    }
+    catch (ProcessCanceledException ignore) {
     }
   }
 

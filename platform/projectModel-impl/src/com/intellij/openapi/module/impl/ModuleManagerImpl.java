@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2015 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -218,8 +218,7 @@ public abstract class ModuleManagerImpl extends ModuleManager implements Project
     final List<ModulePath> paths = new ArrayList<ModulePath>();
     final Element modules = element.getChild(ELEMENT_MODULES);
     if (modules != null) {
-      for (final Object value : modules.getChildren(ELEMENT_MODULE)) {
-        Element moduleElement = (Element)value;
+      for (final Element moduleElement : modules.getChildren(ELEMENT_MODULE)) {
         final String fileUrlValue = moduleElement.getAttributeValue(ATTRIBUTE_FILEURL);
         final String filepath;
         if (fileUrlValue != null) {
@@ -256,10 +255,9 @@ public abstract class ModuleManagerImpl extends ModuleManager implements Project
     final List<Module> modulesWithUnknownTypes = new ArrayList<Module>();
     List<ModuleLoadingErrorDescription> errors = new ArrayList<ModuleLoadingErrorDescription>();
 
-    for (int i = 0; i < myModulePaths.size(); i++) {
-      ModulePath modulePath = myModulePaths.get(i);
+    for (ModulePath modulePath : myModulePaths) {
       if (progressIndicator != null) {
-        progressIndicator.setFraction((double) i / myModulePaths.size());
+        progressIndicator.setFraction(progressIndicator.getFraction() + myProgressStep);
       }
       try {
         final Module module = moduleModel.loadModuleInternal(modulePath.getPath());
@@ -275,8 +273,9 @@ public abstract class ModuleManagerImpl extends ModuleManager implements Project
         myFailedModulePaths.remove(modulePath);
       }
       catch (IOException e) {
-        errors.add(ModuleLoadingErrorDescription.create(ProjectBundle.message("module.cannot.load.error", modulePath.getPath(), e.getMessage()),
-                                                     modulePath, this));
+        errors
+          .add(ModuleLoadingErrorDescription.create(ProjectBundle.message("module.cannot.load.error", modulePath.getPath(), e.getMessage()),
+                                                    modulePath, this));
       }
       catch (ModuleWithNameAlreadyExists moduleWithNameAlreadyExists) {
         errors.add(ModuleLoadingErrorDescription.create(moduleWithNameAlreadyExists.getMessage(), modulePath, this));
@@ -286,11 +285,13 @@ public abstract class ModuleManagerImpl extends ModuleManager implements Project
     onModuleLoadErrors(errors);
 
     showUnknownModuleTypeNotification(modulesWithUnknownTypes);
-
-    if (progressIndicator != null) {
-      progressIndicator.setIndeterminate(true);
-    }
   }
+
+  public int getModulePathsCount() { return myModulePaths == null ? 0 : myModulePaths.size(); }
+
+  private double myProgressStep;
+
+  public void setProgressStep(double step) { myProgressStep = step; }
 
   protected boolean isUnknownModuleType(@NotNull Module module) {
     return false;
@@ -644,11 +645,12 @@ public abstract class ModuleManagerImpl extends ModuleManager implements Project
     @Override
     @NotNull
     public Module[] getModules() {
-      if (myModulesCache == null) {
+      Module[] cache = myModulesCache;
+      if (cache == null) {
         Collection<Module> modules = myModules.values();
-        myModulesCache = modules.toArray(new Module[modules.size()]);
+        myModulesCache = cache = modules.toArray(new Module[modules.size()]);
       }
-      return myModulesCache;
+      return cache;
     }
 
     @NotNull

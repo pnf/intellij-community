@@ -48,6 +48,7 @@ import static com.intellij.openapi.util.Pair.pair;
 import static com.intellij.psi.CommonClassNames.JAVA_LANG_ANNOTATION_ANNOTATION;
 import static com.intellij.psi.CommonClassNames.JAVA_LANG_STRING;
 import static com.intellij.psi.impl.compiled.ClsFileImpl.EMPTY_ATTRIBUTES;
+import static com.intellij.util.BitUtil.isSet;
 
 /**
  * @author max
@@ -100,10 +101,10 @@ public class StubBuildingVisitor<T> extends ClassVisitor {
     String shortName = myShortName != null && name.endsWith(myShortName) ? myShortName : PsiNameHelper.getShortClassName(fqn);
 
     int flags = myAccess | access;
-    boolean isDeprecated = (flags & Opcodes.ACC_DEPRECATED) != 0;
-    boolean isInterface = (flags & Opcodes.ACC_INTERFACE) != 0;
-    boolean isEnum = (flags & Opcodes.ACC_ENUM) != 0;
-    boolean isAnnotationType = (flags & Opcodes.ACC_ANNOTATION) != 0;
+    boolean isDeprecated = isSet(flags, Opcodes.ACC_DEPRECATED);
+    boolean isInterface = isSet(flags, Opcodes.ACC_INTERFACE);
+    boolean isEnum = isSet(flags, Opcodes.ACC_ENUM);
+    boolean isAnnotationType = isSet(flags, Opcodes.ACC_ANNOTATION);
     byte stubFlags = PsiClassStubImpl.packFlags(isDeprecated, isInterface, isEnum, false, false, isAnnotationType, false, false);
     myResult = new PsiClassStubImpl(JavaStubElementTypes.CLASS, myParent, fqn, shortName, null, stubFlags);
 
@@ -205,39 +206,39 @@ public class StubBuildingVisitor<T> extends ClassVisitor {
   private static int packCommonFlags(int access) {
     int flags = 0;
 
-    if ((access & Opcodes.ACC_PRIVATE) != 0) flags |= ModifierFlags.PRIVATE_MASK;
-    else if ((access & Opcodes.ACC_PROTECTED) != 0) flags |= ModifierFlags.PROTECTED_MASK;
-    else if ((access & Opcodes.ACC_PUBLIC) != 0) flags |= ModifierFlags.PUBLIC_MASK;
+    if (isSet(access, Opcodes.ACC_PRIVATE)) flags |= ModifierFlags.PRIVATE_MASK;
+    else if (isSet(access, Opcodes.ACC_PROTECTED)) flags |= ModifierFlags.PROTECTED_MASK;
+    else if (isSet(access, Opcodes.ACC_PUBLIC)) flags |= ModifierFlags.PUBLIC_MASK;
     else flags |= ModifierFlags.PACKAGE_LOCAL_MASK;
 
-    if ((access & Opcodes.ACC_STATIC) != 0) flags |= ModifierFlags.STATIC_MASK;
-    if ((access & Opcodes.ACC_FINAL) != 0) flags |= ModifierFlags.FINAL_MASK;
+    if (isSet(access, Opcodes.ACC_STATIC)) flags |= ModifierFlags.STATIC_MASK;
+    if (isSet(access, Opcodes.ACC_FINAL)) flags |= ModifierFlags.FINAL_MASK;
 
     return flags;
   }
 
   private static int packClassFlags(int access) {
     int flags = packCommonFlags(access);
-    if ((access & Opcodes.ACC_ABSTRACT) != 0) flags |= ModifierFlags.ABSTRACT_MASK;
+    if (isSet(access, Opcodes.ACC_ABSTRACT)) flags |= ModifierFlags.ABSTRACT_MASK;
     return flags;
   }
 
   private static int packFieldFlags(int access) {
     int flags = packCommonFlags(access);
-    if ((access & Opcodes.ACC_VOLATILE) != 0) flags |= ModifierFlags.VOLATILE_MASK;
-    if ((access & Opcodes.ACC_TRANSIENT) != 0) flags |= ModifierFlags.TRANSIENT_MASK;
+    if (isSet(access, Opcodes.ACC_VOLATILE)) flags |= ModifierFlags.VOLATILE_MASK;
+    if (isSet(access, Opcodes.ACC_TRANSIENT)) flags |= ModifierFlags.TRANSIENT_MASK;
     return flags;
   }
 
   private static int packMethodFlags(int access, boolean isInterface) {
     int flags = packCommonFlags(access);
 
-    if ((access & Opcodes.ACC_SYNCHRONIZED) != 0) flags |= ModifierFlags.SYNCHRONIZED_MASK;
-    if ((access & Opcodes.ACC_NATIVE) != 0) flags |= ModifierFlags.NATIVE_MASK;
-    if ((access & Opcodes.ACC_STRICT) != 0) flags |= ModifierFlags.STRICTFP_MASK;
+    if (isSet(access, Opcodes.ACC_SYNCHRONIZED)) flags |= ModifierFlags.SYNCHRONIZED_MASK;
+    if (isSet(access, Opcodes.ACC_NATIVE)) flags |= ModifierFlags.NATIVE_MASK;
+    if (isSet(access, Opcodes.ACC_STRICT)) flags |= ModifierFlags.STRICTFP_MASK;
 
-    if ((access & Opcodes.ACC_ABSTRACT) != 0) flags |= ModifierFlags.ABSTRACT_MASK;
-    else if (isInterface && (access & Opcodes.ACC_STATIC) == 0) flags |= ModifierFlags.DEFENDER_MASK;
+    if (isSet(access, Opcodes.ACC_ABSTRACT)) flags |= ModifierFlags.ABSTRACT_MASK;
+    else if (isInterface && !isSet(access, Opcodes.ACC_STATIC)) flags |= ModifierFlags.DEFENDER_MASK;
 
     return flags;
   }
@@ -266,7 +267,7 @@ public class StubBuildingVisitor<T> extends ClassVisitor {
 
   @Override
   public void visitInnerClass(String name, String outerName, String innerName, int access) {
-    if ((access & Opcodes.ACC_SYNTHETIC) != 0) return;
+    if (isSet(access, Opcodes.ACC_SYNTHETIC)) return;
     if (innerName == null || outerName == null) return;
 
     if (myParent instanceof PsiFileStub && myInternalName.equals(name)) {
@@ -284,15 +285,15 @@ public class StubBuildingVisitor<T> extends ClassVisitor {
   @Override
   @Nullable
   public FieldVisitor visitField(int access, String name, String desc, String signature, Object value) {
-    if ((access & Opcodes.ACC_SYNTHETIC) != 0) return null;
+    if (isSet(access, Opcodes.ACC_SYNTHETIC)) return null;
     if (name == null) return null;
 
-    byte flags = PsiFieldStubImpl.packFlags((access & Opcodes.ACC_ENUM) != 0, (access & Opcodes.ACC_DEPRECATED) != 0, false, false);
+    byte flags = PsiFieldStubImpl.packFlags(isSet(access, Opcodes.ACC_ENUM), isSet(access, Opcodes.ACC_DEPRECATED), false, false);
     TypeInfo type = fieldType(desc, signature);
     String initializer = constToString(value, type.text, false, myMapping);
     PsiFieldStub stub = new PsiFieldStubImpl(myResult, name, type, initializer, flags);
     PsiModifierListStub modList = new PsiModifierListStubImpl(stub, packFieldFlags(access));
-    return new AnnotationCollectingVisitor(modList, myMapping);
+    return new FieldAnnotationCollectingVisitor(modList, myMapping);
   }
 
   private TypeInfo fieldType(String desc, String signature) {
@@ -320,7 +321,7 @@ public class StubBuildingVisitor<T> extends ClassVisitor {
     // must be marked as synthetic, except for default constructors and the class initialization method.
     // However Scala compiler erroneously generates ACC_BRIDGE instead of ACC_SYNTHETIC flag for in-trait implementation delegation.
     // See IDEA-78649
-    if ((access & Opcodes.ACC_SYNTHETIC) != 0) return null;
+    if (isSet(access, Opcodes.ACC_SYNTHETIC)) return null;
     if (name == null) return null;
     if (SYNTHETIC_CLASS_INIT_METHOD.equals(name)) return null;
 
@@ -333,9 +334,9 @@ public class StubBuildingVisitor<T> extends ClassVisitor {
     }
 
     boolean isConstructor = SYNTHETIC_INIT_METHOD.equals(name);
-    boolean isDeprecated = (access & Opcodes.ACC_DEPRECATED) != 0;
-    boolean isVarargs = (access & Opcodes.ACC_VARARGS) != 0;
-    boolean isStatic = (access & Opcodes.ACC_STATIC) != 0;
+    boolean isDeprecated = isSet(access, Opcodes.ACC_DEPRECATED);
+    boolean isVarargs = isSet(access, Opcodes.ACC_VARARGS);
+    boolean isStatic = isSet(access, Opcodes.ACC_STATIC);
     boolean isAnnotationMethod = myResult.isAnnotationType();
 
     byte flags = PsiMethodStubImpl.packFlags(isConstructor, isAnnotationMethod, isVarargs, isDeprecated, false, false);
@@ -368,7 +369,9 @@ public class StubBuildingVisitor<T> extends ClassVisitor {
     }
 
     boolean isEnumConstructor = isEnum && isConstructor;
-    boolean isInnerClassConstructor = isConstructor && !(myParent instanceof PsiFileStub) && (myModList.getModifiersMask() & Opcodes.ACC_STATIC) == 0;
+    boolean isInnerClassConstructor = isConstructor &&
+                                      !(myParent instanceof PsiFileStub) &&
+                                      !isSet(myModList.getModifiersMask(), Opcodes.ACC_STATIC);
 
     List<String> args = info.argTypes;
     if (!generic && isEnumConstructor && args.size() >= 2 && JAVA_LANG_STRING.equals(args.get(0)) && "int".equals(args.get(1))) {
@@ -388,7 +391,7 @@ public class StubBuildingVisitor<T> extends ClassVisitor {
       TypeInfo typeInfo = TypeInfo.fromString(arg, isEllipsisParam);
 
       String paramName = i < parameterNames.length ? parameterNames[i] : "p" + (i + 1);
-      PsiParameterStubImpl parameterStub = new PsiParameterStubImpl(parameterList, paramName, typeInfo, isEllipsisParam);
+      PsiParameterStubImpl parameterStub = new PsiParameterStubImpl(parameterList, paramName, typeInfo, isEllipsisParam, true);
       paramStubs[i] = parameterStub;
       new PsiModifierListStubImpl(parameterStub, 0);
     }
@@ -397,7 +400,7 @@ public class StubBuildingVisitor<T> extends ClassVisitor {
 
     int localVarIgnoreCount = isStatic ? 0 : isEnumConstructor ? 3 : 1;
     int paramIgnoreCount = isEnumConstructor ? 2 : isInnerClassConstructor ? 1 : 0;
-    return new AnnotationParamCollectingVisitor(stub, modList, localVarIgnoreCount, paramIgnoreCount, paramCount, paramStubs, myMapping);
+    return new ParameterAnnotationCollectingVisitor(stub, modList, localVarIgnoreCount, paramIgnoreCount, paramCount, paramStubs, myMapping);
   }
 
   private MethodInfo parseMethodSignature(String signature, String[] exceptions) throws ClsFormatException {
@@ -552,11 +555,11 @@ public class StubBuildingVisitor<T> extends ClassVisitor {
     }
   }
 
-  private static class AnnotationCollectingVisitor extends FieldVisitor {
+  private static class FieldAnnotationCollectingVisitor extends FieldVisitor {
     private final PsiModifierListStub myModList;
     private final Function<String, String> myMapping;
 
-    private AnnotationCollectingVisitor(PsiModifierListStub modList, Function<String, String> mapping) {
+    private FieldAnnotationCollectingVisitor(PsiModifierListStub modList, Function<String, String> mapping) {
       super(ASM_API);
       myModList = modList;
       myMapping = mapping;
@@ -573,7 +576,7 @@ public class StubBuildingVisitor<T> extends ClassVisitor {
     }
   }
 
-  private static class AnnotationParamCollectingVisitor extends MethodVisitor {
+  private static class ParameterAnnotationCollectingVisitor extends MethodVisitor {
     private final PsiMethodStub myOwner;
     private final PsiModifierListStub myModList;
     private final int myIgnoreCount;
@@ -584,13 +587,13 @@ public class StubBuildingVisitor<T> extends ClassVisitor {
     private int myUsedParamSize = 0;
     private int myUsedParamCount = 0;
 
-    private AnnotationParamCollectingVisitor(PsiMethodStub owner,
-                                             PsiModifierListStub modList,
-                                             int ignoreCount,
-                                             int paramIgnoreCount,
-                                             int paramCount,
-                                             PsiParameterStubImpl[] paramStubs,
-                                             Function<String, String> mapping) {
+    private ParameterAnnotationCollectingVisitor(PsiMethodStub owner,
+                                                 PsiModifierListStub modList,
+                                                 int ignoreCount,
+                                                 int paramIgnoreCount,
+                                                 int paramCount,
+                                                 PsiParameterStubImpl[] paramStubs,
+                                                 Function<String, String> mapping) {
       super(ASM_API);
       myOwner = owner;
       myModList = modList;

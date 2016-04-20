@@ -16,13 +16,14 @@
 
 package com.intellij.codeInspection.ui;
 
+import com.intellij.codeHighlighting.HighlightDisplayLevel;
 import com.intellij.codeInspection.CommonProblemDescriptor;
 import com.intellij.codeInspection.InspectionsBundle;
+import com.intellij.codeInspection.reference.RefDirectory;
 import com.intellij.codeInspection.reference.RefElement;
 import com.intellij.codeInspection.reference.RefEntity;
-import com.intellij.openapi.util.Computable;
 import com.intellij.openapi.vcs.FileStatus;
-import com.intellij.ui.ComputableIcon;
+import com.intellij.util.containers.FactoryMap;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -32,28 +33,17 @@ import javax.swing.tree.MutableTreeNode;
 /**
  * @author max
  */
-public class RefElementNode extends InspectionTreeNode {
+public class RefElementNode extends SuppressableInspectionTreeNode implements RefElementAware {
   private boolean myHasDescriptorsUnder = false;
   private CommonProblemDescriptor mySingleDescriptor = null;
   protected final InspectionToolPresentation myToolPresentation;
-  private final ComputableIcon myIcon = new ComputableIcon(new Computable<Icon>() {
-    @Override
-    public Icon compute() {
-      final RefEntity refEntity = getElement();
-      if (refEntity == null) {
-        return null;
-      }
-      return refEntity.getIcon(false);
-    }
-  });
-
-  public RefElementNode(@Nullable Object userObject, @NotNull InspectionToolPresentation presentation) {
-    super(userObject);
+  private final Icon myIcon;
+  public RefElementNode(@Nullable RefEntity userObject, @NotNull InspectionToolPresentation presentation) {
+    super(userObject, presentation);
     myToolPresentation = presentation;
-  }
-
-  public RefElementNode(@NotNull RefElement element, @NotNull InspectionToolPresentation presentation) {
-    this((Object)element, presentation);
+    init();
+    final RefEntity refEntity = getElement();
+    myIcon = refEntity == null ? null : refEntity.getIcon(false);
   }
 
   public boolean hasDescriptorsUnder() {
@@ -68,39 +58,34 @@ public class RefElementNode extends InspectionTreeNode {
   @Override
   @Nullable
   public Icon getIcon(boolean expanded) {
-    return myIcon.getIcon();
-  }
-
-  public String toString() {
-    final RefEntity element = getElement();
-    if (element == null || !element.isValid()) {
-      return InspectionsBundle.message("inspection.reference.invalid");
-    }
-    return element.getRefManager().getRefinedElement(element).getQualifiedName();
+    return myIcon;
   }
 
   @Override
-  public boolean isValid() {
+  protected String calculatePresentableName() {
+    final RefEntity element = getElement();
+    if (element == null) {
+      return InspectionsBundle.message("inspection.reference.invalid");
+    }
+    return element.getRefManager().getRefinedElement(element).getName();
+  }
+
+  @Override
+  protected boolean calculateIsValid() {
     final RefEntity refEntity = getElement();
     return refEntity != null && refEntity.isValid();
   }
 
   @Override
-  public boolean isResolved() {
-    return myToolPresentation.isElementIgnored(getElement());
-  }
-
-
-  @Override
-  public void ignoreElement() {
+  public void excludeElement(ExcludedInspectionTreeNodesManager excludedManager) {
     myToolPresentation.ignoreCurrentElement(getElement());
-    super.ignoreElement();
+    super.excludeElement(excludedManager);
   }
 
   @Override
-  public void amnesty() {
+  public void amnestyElement(ExcludedInspectionTreeNodesManager excludedManager) {
     myToolPresentation.amnesty(getElement());
-    super.amnesty();
+    super.amnestyElement(excludedManager);
   }
 
   @Override
@@ -124,4 +109,38 @@ public class RefElementNode extends InspectionTreeNode {
     return mySingleDescriptor;
   }
 
+  @Override
+  public RefEntity getContainingFileLocalEntity() {
+    final RefEntity element = getElement();
+    return element instanceof RefElement && !(element instanceof RefDirectory)
+           ? element
+           : super.getContainingFileLocalEntity();
+  }
+
+  @Override
+  public int getProblemCount() {
+    return Math.max(1, super.getProblemCount());
+  }
+
+  @Override
+  public void visitProblemSeverities(FactoryMap<HighlightDisplayLevel, Integer> counter) {
+    if (isLeaf()) {
+      counter.put(HighlightDisplayLevel.WARNING, counter.get(HighlightDisplayLevel.WARNING) + 1);
+      return;
+    }
+    super.visitProblemSeverities(counter);
+  }
+
+  @Nullable
+  @Override
+  public String getCustomizedTailText() {
+    if (myToolPresentation.isDummy()) {
+      return "";
+    }
+    final String customizedText = super.getCustomizedTailText();
+    if (customizedText != null) {
+      return customizedText;
+    }
+    return isLeaf() ? "" : null;
+  }
 }

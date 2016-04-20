@@ -15,13 +15,11 @@
  */
 package com.intellij.openapi.vcs.impl;
 
-import com.intellij.openapi.application.ApplicationManager;
+import com.intellij.ide.scratch.ScratchUtil;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.editor.Document;
 import com.intellij.openapi.fileEditor.FileDocumentManager;
-import com.intellij.openapi.fileEditor.impl.LoadTextUtil;
 import com.intellij.openapi.project.Project;
-import com.intellij.openapi.util.Computable;
 import com.intellij.openapi.util.Pair;
 import com.intellij.openapi.vcs.*;
 import com.intellij.openapi.vcs.changes.*;
@@ -100,6 +98,9 @@ public class VcsFileStatusProvider implements FileStatusProvider, VcsBaseContent
   public FileStatus getFileStatus(@NotNull final VirtualFile virtualFile) {
     final AbstractVcs vcs = myVcsManager.getVcsFor(virtualFile);
     if (vcs == null) {
+      if (ScratchUtil.isScratch(virtualFile)) {
+        return FileStatus.SUPPRESSED;
+      }
       return FileStatusManagerImpl.getDefaultStatus(virtualFile);
     }
 
@@ -172,19 +173,6 @@ public class VcsFileStatusProvider implements FileStatusProvider, VcsBaseContent
       }
       return null;
     }
-
-    if (isDocumentModified(file)) {
-      String content = ApplicationManager.getApplication().runReadAction(new Computable<String>() {
-        @Override
-        public String compute() {
-          if (!file.isValid()) return null;
-          return LoadTextUtil.loadText(file).toString();
-        }
-      });
-      if (content == null) return null;
-      return Pair.create(VcsRevisionNumber.NULL, content);
-    }
-
     return null;
   }
 }

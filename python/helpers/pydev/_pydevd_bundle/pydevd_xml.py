@@ -82,6 +82,13 @@ def _update_type_map():
             pass  #django may not be installed
 
         try:
+            from django.forms import BaseForm
+            _TYPE_MAP.insert(0, (BaseForm, pydevd_resolver.djangoFormResolver))
+            #we should put it before instance resolver
+        except:
+            pass  #django may not be installed
+
+        try:
             from collections import deque
             _TYPE_MAP.append((deque, pydevd_resolver.dequeResolver))
         except:
@@ -169,6 +176,9 @@ def frame_vars_to_xml(frame_f_locals):
     return xml
 
 
+def get_type_qualifier(type):
+    return getattr(type, "__module__", "")
+
 def var_to_xml(val, name, doTrim=True, additionalInXml=''):
     """ single variable or dictionary to xml representation """
 
@@ -180,6 +190,13 @@ def var_to_xml(val, name, doTrim=True, additionalInXml=''):
         v = val
 
     _type, typeName, resolver = get_type(v)
+    type_qualifier = get_type_qualifier(_type)
+
+
+    do_not_call_value_str = False
+    if isinstance(resolver, pydevd_resolver.djangoFormResolver.__class__):
+        # do not call str() of Django form objects because has side effects and breaks self.errors
+        do_not_call_value_str = True
 
     try:
         if hasattr(v, '__class__'):
@@ -204,7 +221,11 @@ def var_to_xml(val, name, doTrim=True, additionalInXml=''):
                         cName = cName[:-2]
                 except:
                     cName = str(v.__class__)
-                value = '%s: %s' % (cName, v)
+
+                if do_not_call_value_str:
+                    value = '%s: %r' % (cName, v)
+                else:
+                    value = '%s: %s' % (cName, v)
         else:
             value = str(v)
     except:
@@ -217,7 +238,7 @@ def var_to_xml(val, name, doTrim=True, additionalInXml=''):
         name = quote(name, '/>_= ') #TODO: Fix PY-5834 without using quote
     except:
         pass
-    xml = '<var name="%s" type="%s"' % (make_valid_xml_value(name), make_valid_xml_value(typeName))
+    xml = '<var name="%s" type="%s" qualifier="%s"' % (make_valid_xml_value(name), make_valid_xml_value(typeName), make_valid_xml_value(type_qualifier))
 
     if value:
         #cannot be too big... communication may not handle it.

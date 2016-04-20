@@ -492,6 +492,10 @@ public class IntroduceVariableTest extends LightCodeInsightTestCase {
     doTest(new MockIntroduceVariableHandler("s", false, false, false, "java.lang.String"));
   }
 
+  public void testPutInNestedLambdaBody() {
+    doTest(new MockIntroduceVariableHandler("s", false, false, false, "java.lang.String"));
+  }
+
   public void testNormalizeDeclarations() {
     doTest(new MockIntroduceVariableHandler("i3", false, false, false, "int"));
   }
@@ -510,6 +514,10 @@ public class IntroduceVariableTest extends LightCodeInsightTestCase {
 
   public void testDenotableType2() {
     doTest(new MockIntroduceVariableHandler("m", false, false, false, "I<? extends I<?>>"));
+  }
+
+  public void testDenotableType3() {
+    doTest(new MockIntroduceVariableHandler("m", false, false, false, "java.util.function.IntFunction<java.lang.Class<?>[]>"));
   }
 
   public void testReturnNonExportedArray() {

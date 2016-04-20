@@ -54,9 +54,7 @@ import com.intellij.openapi.wm.WindowManager;
 import com.intellij.psi.*;
 import com.intellij.psi.codeStyle.CodeStyleSettingsManager;
 import com.intellij.psi.stubs.StubElement;
-import com.intellij.psi.util.PsiTreeUtil;
-import com.intellij.psi.util.PsiUtilCore;
-import com.intellij.psi.util.QualifiedName;
+import com.intellij.psi.util.*;
 import com.intellij.ui.awt.RelativePoint;
 import com.intellij.util.*;
 import com.intellij.util.containers.ContainerUtil;
@@ -845,6 +843,22 @@ public class PyUtil {
         }
       }
     });
+  }
+
+  public static <T, P> T getParameterizedCachedValue(@NotNull PsiElement element, @NotNull P param, @NotNull NotNullFunction<P, T> f) {
+    final Map<P, T> cache = CachedValuesManager.getCachedValue(element, new CachedValueProvider<Map<P, T>>() {
+      @Nullable
+      @Override
+      public Result<Map<P, T>> compute() {
+        return Result.create(Maps.newHashMap(), PsiModificationTracker.MODIFICATION_COUNT);
+      }
+    });
+    T result = cache.get(param);
+    if (result == null) {
+      result = f.fun(param);
+      cache.put(param, result);
+    }
+    return result;
   }
 
   public static class KnownDecoratorProviderHolder {
@@ -1716,6 +1730,66 @@ public class PyUtil {
 
   public static boolean isInScratchFile(@NotNull PsiElement element) {
     return ScratchFileService.isInScratchRoot(PsiUtilCore.getVirtualFile(element));
+  }
+
+  @Nullable
+  public static PyType getReturnTypeOfMember(@NotNull PyType type,
+                                             @NotNull String memberName,
+                                             @Nullable PyExpression location,
+                                             @NotNull TypeEvalContext context) {
+    final PyResolveContext resolveContext = PyResolveContext.noImplicits().withTypeEvalContext(context);
+    final List<? extends RatedResolveResult> resolveResults = type.resolveMember(memberName, location, AccessDirection.READ,
+                                                                                 resolveContext);
+
+    if (resolveResults != null) {
+      final List<PyType> types = new ArrayList<>();
+
+      for (RatedResolveResult resolveResult : resolveResults) {
+        final PyType returnType = getReturnType(resolveResult.getElement(), context);
+
+        if (returnType != null) {
+          types.add(returnType);
+        }
+      }
+
+      return PyUnionType.union(types);
+    }
+
+    return null;
+  }
+
+  @Nullable
+  private static PyType getReturnType(@Nullable PsiElement element, @NotNull TypeEvalContext context) {
+    if (element instanceof PyTypedElement) {
+      final PyType type = context.getType((PyTypedElement)element);
+
+      return getReturnType(type, context);
+    }
+
+    return null;
+  }
+
+  @Nullable
+  private static PyType getReturnType(@Nullable PyType type, @NotNull TypeEvalContext context) {
+    if (type instanceof PyCallableType) {
+      return ((PyCallableType)type).getReturnType(context);
+    }
+
+    if (type instanceof PyUnionType) {
+      final List<PyType> types = new ArrayList<>();
+
+      for (PyType pyType : ((PyUnionType)type).getMembers()) {
+        final PyType returnType = getReturnType(pyType, context);
+
+        if (returnType != null) {
+          types.add(returnType);
+        }
+      }
+
+      return PyUnionType.union(types);
+    }
+
+    return null;
   }
 
   /**

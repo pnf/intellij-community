@@ -100,7 +100,7 @@ public class XBreakpointUtil {
   }
 
   public static List<BreakpointPanelProvider> collectPanelProviders() {
-    List<BreakpointPanelProvider> panelProviders = new ArrayList<BreakpointPanelProvider>();
+    List<BreakpointPanelProvider> panelProviders = new ArrayList<>();
     for (DebuggerSupport debuggerSupport : DebuggerSupport.getDebuggerSupports()) {
       panelProviders.add(debuggerSupport.getBreakpointPanelProvider());
     }
@@ -116,7 +116,7 @@ public class XBreakpointUtil {
   @Nullable
   public static DebuggerSupport getDebuggerSupport(Project project, BreakpointItem breakpointItem) {
     DebuggerSupport[] debuggerSupports = DebuggerSupport.getDebuggerSupports();
-    List<BreakpointItem> items = new ArrayList<BreakpointItem>();
+    List<BreakpointItem> items = new ArrayList<>();
     for (DebuggerSupport support : debuggerSupports) {
       support.getBreakpointPanelProvider().provideBreakpointItems(project, items);
       if (items.contains(breakpointItem)) {
@@ -133,11 +133,11 @@ public class XBreakpointUtil {
    * - if folded, checks if line breakpoints could be toggled inside folded text
    */
   @NotNull
-  public static Promise<XLineBreakpoint> toggleLineBreakpoint(@NotNull Project project,
-                                                              @NotNull XSourcePosition position,
-                                                              @Nullable Editor editor,
-                                                              boolean temporary,
-                                                              boolean moveCarret) {
+  public static Promise toggleLineBreakpoint(@NotNull Project project,
+                                             @NotNull XSourcePosition position,
+                                             @Nullable Editor editor,
+                                             boolean temporary,
+                                             boolean moveCarret) {
     int lineStart = position.getLine();
     VirtualFile file = position.getFile();
     // for folded text check each line and find out type with the biggest priority

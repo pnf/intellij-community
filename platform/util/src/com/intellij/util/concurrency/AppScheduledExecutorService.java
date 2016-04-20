@@ -32,7 +32,9 @@ import java.util.concurrent.atomic.AtomicInteger;
  */
 public class AppScheduledExecutorService extends SchedulingWrapper {
   private static final Logger LOG = Logger.getInstance("#org.jetbrains.ide.PooledThreadExecutor");
+  static final String POOLED_THREAD_PREFIX = "ApplicationImpl pooled thread ";
   private Consumer<Thread> newThreadListener;
+  private final AtomicInteger counter = new AtomicInteger();
 
   private static class Holder {
     private static final AppScheduledExecutorService INSTANCE = new AppScheduledExecutorService();
@@ -46,11 +48,10 @@ public class AppScheduledExecutorService extends SchedulingWrapper {
   AppScheduledExecutorService() {
     super(new BackendThreadPoolExecutor(), new AppDelayQueue());
     ((BackendThreadPoolExecutor)backendExecutorService).doSetThreadFactory(new ThreadFactory() {
-      private final AtomicInteger counter = new AtomicInteger();
       @NotNull
       @Override
       public Thread newThread(@NotNull final Runnable r) {
-        Thread thread = new Thread(r, "ApplicationImpl pooled thread " + counter.incrementAndGet());
+        Thread thread = new Thread(r, POOLED_THREAD_PREFIX + counter.incrementAndGet());
 
         thread.setPriority(Thread.NORM_PRIORITY - 1);
 
@@ -79,7 +80,7 @@ public class AppScheduledExecutorService extends SchedulingWrapper {
     error();
   }
 
-  private static List<Runnable> error() {
+  static List<Runnable> error() {
     throw new IncorrectOperationException("You must not call this method on the global app pool");
   }
 
@@ -98,6 +99,7 @@ public class AppScheduledExecutorService extends SchedulingWrapper {
   public void shutdownAppScheduledExecutorService() {
     delayQueue.shutdown(); // shutdown delay queue first to avoid rejected execution exceptions in Alarm
     doShutdown();
+    //System.out.println("app threads counter = " + counter);
   }
 
   public int getBackendPoolExecutorSize() {
@@ -118,7 +120,7 @@ public class AppScheduledExecutorService extends SchedulingWrapper {
     @Override
     protected void beforeExecute(Thread t, Runnable r) {
       if (LOG.isTraceEnabled()) {
-        LOG.trace("Running " + BoundedTaskExecutor.info(r) + " in thread@" + System.identityHashCode(t));
+        LOG.trace("Running " + BoundedTaskExecutor.info(r) + " in " + t+" ("+System.identityHashCode(t)+")");
       }
     }
 
@@ -132,6 +134,7 @@ public class AppScheduledExecutorService extends SchedulingWrapper {
     private void doShutdown() {
       super.shutdown();
     }
+
     private List<Runnable> doShutdownNow() {
       return super.shutdownNow();
     }

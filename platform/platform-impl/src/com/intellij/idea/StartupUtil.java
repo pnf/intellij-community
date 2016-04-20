@@ -41,6 +41,7 @@ import com.sun.jna.Native;
 import org.apache.log4j.ConsoleAppender;
 import org.apache.log4j.Level;
 import org.apache.log4j.PatternLayout;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.io.BuiltInServer;
 
@@ -119,7 +120,12 @@ public class StartupUtil {
     if (!checkSystemFolders()) {
       System.exit(Main.DIR_CHECK_FAILED);
     }
-    if (!lockSystemFolders(args)) {
+
+    ActivationResult result = lockSystemFolders(args);
+    if (result == ActivationResult.ACTIVATED) {
+      System.exit(0);
+    }
+    else if (result != ActivationResult.STARTED) {
       System.exit(Main.INSTANCE_CHECK_FAILED);
     }
 
@@ -136,6 +142,7 @@ public class StartupUtil {
     if (!Main.isHeadless()) {
       AppUIUtil.updateWindowIcon(JOptionPane.getRootFrame());
       AppUIUtil.registerBundledFonts();
+      AppUIUtil.showPrivacyPolicy();
     }
 
     appStarter.start(newConfigFolder);
@@ -273,7 +280,9 @@ public class StartupUtil {
     }
   }
 
-  private synchronized static boolean lockSystemFolders(String[] args) {
+  private enum ActivationResult { STARTED, ACTIVATED, FAILED }
+
+  private synchronized static @NotNull ActivationResult lockSystemFolders(String[] args) {
     if (ourSocketLock != null) {
       throw new AssertionError();
     }
@@ -286,28 +295,30 @@ public class StartupUtil {
     }
     catch (Exception e) {
       Main.showMessage("Cannot Lock System Folders", e);
-      return false;
+      return ActivationResult.FAILED;
     }
 
     if (status == SocketLock.ActivateStatus.NO_INSTANCE) {
-      ShutDownTracker.getInstance().registerShutdownTask(new Runnable() {
-        @SuppressWarnings("AssignmentToStaticFieldFromInstanceMethod")
-        @Override
-        public void run() {
-          synchronized (StartupUtil.class) {
-            ourSocketLock.dispose();
-            ourSocketLock = null;
-          }
+      ShutDownTracker.getInstance().registerShutdownTask(() -> {
+        //noinspection SynchronizeOnThis
+        synchronized (StartupUtil.class) {
+          ourSocketLock.dispose();
+          ourSocketLock = null;
         }
       });
-      return true;
+      return ActivationResult.STARTED;
+    }
+    else if (status == SocketLock.ActivateStatus.ACTIVATED) {
+      //noinspection UseOfSystemOutOrSystemErr
+      System.out.println("Already running");
+      return ActivationResult.ACTIVATED;
     }
     else if (Main.isHeadless() || status == SocketLock.ActivateStatus.CANNOT_ACTIVATE) {
       String message = "Only one instance of " + ApplicationNamesInfo.getInstance().getFullProductName() + " can be run at a time.";
       Main.showMessage("Too Many Instances", message, true);
     }
 
-    return false;
+    return ActivationResult.FAILED;
   }
 
   private static void fixProcessEnvironment(Logger log) {
@@ -378,7 +389,7 @@ public class StartupUtil {
     ApplicationInfo appInfo = ApplicationInfoImpl.getShadowInstance();
     ApplicationNamesInfo namesInfo = ApplicationNamesInfo.getInstance();
     String buildDate = new SimpleDateFormat("dd MMM yyyy HH:ss", Locale.US).format(appInfo.getBuildDate().getTime());
-    log.info("IDE: " + namesInfo.getFullProductName() + " (build #" + appInfo.getBuild().asStringWithAllDetails() + ", " + buildDate + ")");
+    log.info("IDE: " + namesInfo.getFullProductName() + " (build #" + appInfo.getBuild().asString() + ", " + buildDate + ")");
     log.info("OS: " + SystemInfoRt.OS_NAME + " (" + SystemInfoRt.OS_VERSION + ", " + SystemInfo.OS_ARCH + ")");
     log.info("JRE: " + System.getProperty("java.runtime.version", "-") + " (" + System.getProperty("java.vendor", "-") + ")");
     log.info("JVM: " + System.getProperty("java.vm.version", "-") + " (" + System.getProperty("java.vm.name", "-") + ")");

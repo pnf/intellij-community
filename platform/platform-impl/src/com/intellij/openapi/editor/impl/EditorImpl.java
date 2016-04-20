@@ -15,12 +15,11 @@
  */
 package com.intellij.openapi.editor.impl;
 
-import com.intellij.application.options.OptionsConstants;
+import com.intellij.application.options.EditorFontsConstants;
 import com.intellij.codeInsight.hint.DocumentFragmentTooltipRenderer;
 import com.intellij.codeInsight.hint.EditorFragmentComponent;
 import com.intellij.codeInsight.hint.TooltipController;
 import com.intellij.codeInsight.hint.TooltipGroup;
-import com.intellij.concurrency.JobScheduler;
 import com.intellij.diagnostic.Dumpable;
 import com.intellij.diagnostic.LogMessageEx;
 import com.intellij.ide.*;
@@ -75,6 +74,7 @@ import com.intellij.ui.components.JBLayeredPane;
 import com.intellij.ui.components.JBScrollBar;
 import com.intellij.ui.components.JBScrollPane;
 import com.intellij.util.*;
+import com.intellij.util.concurrency.EdtExecutorService;
 import com.intellij.util.containers.ContainerUtil;
 import com.intellij.util.containers.ContainerUtilRt;
 import com.intellij.util.messages.MessageBusConnection;
@@ -84,7 +84,6 @@ import com.intellij.util.ui.*;
 import com.intellij.util.ui.update.Activatable;
 import com.intellij.util.ui.update.UiNotifyConnector;
 import gnu.trove.TIntArrayList;
-import gnu.trove.TIntFunction;
 import gnu.trove.TIntHashSet;
 import gnu.trove.TIntIntHashMap;
 import org.intellij.lang.annotations.JdkConstants;
@@ -98,6 +97,7 @@ import javax.swing.*;
 import javax.swing.Timer;
 import javax.swing.border.Border;
 import javax.swing.plaf.ScrollBarUI;
+import javax.swing.plaf.ScrollPaneUI;
 import javax.swing.plaf.basic.BasicScrollBarUI;
 import java.awt.*;
 import java.awt.datatransfer.DataFlavor;
@@ -132,6 +132,7 @@ public final class EditorImpl extends UserDataHolderBase implements EditorEx, Hi
   private static final Key<JComponent> PERMANENT_HEADER = Key.create("PERMANENT_HEADER");
   public static final Key<Boolean> DO_DOCUMENT_UPDATE_TEST = Key.create("DoDocumentUpdateTest");
   public static final Key<Boolean> FORCED_SOFT_WRAPS = Key.create("forced.soft.wraps");
+  public static final Key<Boolean> DISABLE_CARET_POSITION_KEEPING = Key.create("editor.disable.caret.position.keeping");
   private static final boolean HONOR_CAMEL_HUMPS_ON_TRIPLE_CLICK = Boolean.parseBoolean(System.getProperty("idea.honor.camel.humps.on.triple.click"));
   private static final Key<BufferedImage> BUFFER = Key.create("buffer");
   private static final Color CURSOR_FOREGROUND_LIGHT = Gray._255;
@@ -139,14 +140,14 @@ public final class EditorImpl extends UserDataHolderBase implements EditorEx, Hi
   @NotNull private final DocumentEx myDocument;
 
   private final JPanel myPanel;
-  @NotNull private final JScrollPane myScrollPane;
+  @NotNull private final JScrollPane myScrollPane = new MyScrollPane();
   @NotNull private final EditorComponentImpl myEditorComponent;
   @NotNull private final EditorGutterComponentImpl myGutterComponent;
   private final TraceableDisposable myTraceableDisposable = new TraceableDisposable(true);
   private int myLinePaintersWidth;
 
   static {
-    ComplementaryFontsRegistry.getFontAbleToDisplay(' ', 0, 0, UIManager.getFont("Label.font").getFamily()); // load costly font info
+    ComplementaryFontsRegistry.getFontAbleToDisplay(' ', 0, Font.PLAIN, UIManager.getFont("Label.font").getFamily()); // load costly font info
   }
 
   private final CommandProcessor myCommandProcessor;
@@ -343,7 +344,7 @@ public final class EditorImpl extends UserDataHolderBase implements EditorEx, Hi
     initTabPainter();
     myIsViewer = viewer;
     mySettings = new SettingsImpl(this, project);
-    if (shouldSoftWrapsBeForced()) {
+    if (!mySettings.isUseSoftWraps() && shouldSoftWrapsBeForced()) {
       mySettings.setUseSoftWrapsQuiet();
       putUserData(FORCED_SOFT_WRAPS, Boolean.TRUE);
     }
@@ -355,6 +356,7 @@ public final class EditorImpl extends UserDataHolderBase implements EditorEx, Hi
     myDocumentMarkupModel = new EditorFilteringMarkupModelEx(this, documentMarkup);
     myFoldingModel = new FoldingModelImpl(this);
     myCaretModel = new CaretModelImpl(this);
+    myScrollingModel = new ScrollingModelImpl(this);
     mySoftWrapModel = new SoftWrapModelImpl(this);
     if (!myUseNewRendering) mySizeContainer.reset();
 
@@ -533,7 +535,6 @@ public final class EditorImpl extends UserDataHolderBase implements EditorEx, Hi
     setHighlighter(highlighter);
 
     myEditorComponent = new EditorComponentImpl(this);
-    myScrollPane = new MyScrollPane();
     myScrollPane.putClientProperty(JBScrollPane.BRIGHTNESS_FROM_VIEW, true);
     myVerticalScrollBar = (MyScrollBar)myScrollPane.getVerticalScrollBar();
     myVerticalScrollBar.setOpaque(false);
@@ -555,7 +556,6 @@ public final class EditorImpl extends UserDataHolderBase implements EditorEx, Hi
     myHeaderPanel = new MyHeaderPanel();
     myGutterComponent = new EditorGutterComponentImpl(this);
     initComponent();
-    myScrollingModel = new ScrollingModelImpl(this);
 
     if (myUseNewRendering) {
       myView = new EditorView(this);
@@ -569,12 +569,6 @@ public final class EditorImpl extends UserDataHolderBase implements EditorEx, Hi
       setFontSize(UISettings.getInstance().PRESENTATION_MODE_FONT_SIZE);
     }
 
-    myGutterComponent.setLineNumberAreaWidthFunction(new TIntFunction() {
-        @Override
-        public int execute(int lineNumber) {
-          return getFontMetrics(Font.PLAIN).stringWidth(Integer.toString(lineNumber + 1));
-        }
-      });
     myGutterComponent.updateSize();
     Dimension preferredSize = getPreferredSize();
     myEditorComponent.setSize(preferredSize);
@@ -582,10 +576,9 @@ public final class EditorImpl extends UserDataHolderBase implements EditorEx, Hi
     updateCaretCursor();
   }
 
-  private boolean shouldSoftWrapsBeForced() {
-    if (mySettings.isUseSoftWraps() ||
-        // Disable checking for files in intermediate states - e.g. for files during refactoring.
-        myProject != null && PsiDocumentManager.getInstance(myProject).isDocumentBlockedByPsi(myDocument)) {
+  public boolean shouldSoftWrapsBeForced() {
+    if (myProject != null && PsiDocumentManager.getInstance(myProject).isDocumentBlockedByPsi(myDocument)) {
+      // Disable checking for files in intermediate states - e.g. for files during refactoring.
       return false;
     }
     int lineWidthLimit = Registry.intValue("editor.soft.wrap.force.limit");
@@ -1031,7 +1024,7 @@ public final class EditorImpl extends UserDataHolderBase implements EditorEx, Hi
     UiNotifyConnector connector = new UiNotifyConnector(myEditorComponent, new Activatable.Adapter() {
       @Override
       public void showNotify() {
-        myGutterComponent.updateSize();
+        myGutterComponent.updateSizeOnShowNotify();
       }
     });
     Disposer.register(getDisposable(), connector);
@@ -1088,7 +1081,7 @@ public final class EditorImpl extends UserDataHolderBase implements EditorEx, Hi
    * @param fontSize new font size
    * @param zoomCenter zoom point, relative to viewport
    */
-  private void setFontSize(final int fontSize, @Nullable Point zoomCenter) {
+  private void setFontSize(int fontSize, @Nullable Point zoomCenter) {
     int oldFontSize = myScheme.getEditorFontSize();
 
     Rectangle visibleArea = myScrollingModel.getVisibleArea();
@@ -1099,6 +1092,7 @@ public final class EditorImpl extends UserDataHolderBase implements EditorEx, Hi
     int intraLineOffset = zoomCenterAbsolute.y % oldLineHeight;
 
     myScheme.setEditorFontSize(fontSize);
+    fontSize = myScheme.getEditorFontSize(); // resulting font size might be different due to applied min/max limits
     myPropertyChangeSupport.firePropertyChange(PROP_FONT_SIZE, oldFontSize, fontSize);
     // Update vertical scroll bar bounds if necessary (we had a problem that use increased editor font size and it was not possible
     // to scroll to the bottom of the document).
@@ -1122,19 +1116,14 @@ public final class EditorImpl extends UserDataHolderBase implements EditorEx, Hi
   public ActionCallback type(@NotNull final String text) {
     final ActionCallback result = new ActionCallback();
 
-    ApplicationManager.getApplication().runWriteAction(new Runnable() {
-      @Override
-      public void run() {
-        for (int i = 0; i < text.length(); i++) {
-          if (!processKeyTyped(text.charAt(i))) {
-            result.setRejected();
-            return;
-          }
-        }
-
-        result.setDone();
+    for (int i = 0; i < text.length(); i++) {
+      if (!processKeyTyped(text.charAt(i))) {
+        result.setRejected();
+        return result;
       }
-    });
+    }
+
+    result.setDone();
 
     return result;
   }
@@ -1875,6 +1864,8 @@ public final class EditorImpl extends UserDataHolderBase implements EditorEx, Hi
     if (myUseNewRendering) {
       myView.getPreferredSize(); // make sure size is calculated (in case it will be required while bulk mode is active)
     }
+
+    myScrollingModel.onBulkDocumentUpdateStarted();
     
     saveCaretRelativePosition();
 
@@ -1904,10 +1895,14 @@ public final class EditorImpl extends UserDataHolderBase implements EditorEx, Hi
     repaintToScreenBottom(0);
     updateCaretCursor();
 
-    restoreCaretRelativePosition();
+    if (!Boolean.TRUE.equals(getUserData(DISABLE_CARET_POSITION_KEEPING))) {
+      restoreCaretRelativePosition();
+    }
   }
 
   private void beforeChangedUpdate(@NotNull DocumentEvent e) {
+    ApplicationManager.getApplication().assertIsDispatchThread();
+    
     myDocumentChangeInProgress = true;
     if (isStickySelection()) {
       setStickySelection(false);
@@ -1952,10 +1947,8 @@ public final class EditorImpl extends UserDataHolderBase implements EditorEx, Hi
 
     boolean painted = false;
     if (myDocument.getTextLength() > 0) {
-      int startDocLine = myDocument.getLineNumber(e.getOffset());
-      int endDocLine = myDocument.getLineNumber(e.getOffset() + e.getNewLength());
-      if (e.getOldLength() > e.getNewLength() || startDocLine != endDocLine || StringUtil.indexOf(e.getOldFragment(), '\n') != -1) {
-        updateGutterSize();
+      if (startLine != endLine || StringUtil.indexOf(e.getOldFragment(), '\n') != -1) {
+        myGutterComponent.clearLineToGutterRenderersCache();
       }
 
       if (countLineFeeds(e.getOldFragment()) != countLineFeeds(e.getNewFragment())) {
@@ -1970,7 +1963,8 @@ public final class EditorImpl extends UserDataHolderBase implements EditorEx, Hi
       repaintLines(startLine, endLine);
     }
 
-    if (getCaretModel().getOffset() < e.getOffset() || getCaretModel().getOffset() > e.getOffset() + e.getNewLength()){
+    if (!Boolean.TRUE.equals(getUserData(DISABLE_CARET_POSITION_KEEPING)) &&
+        (getCaretModel().getOffset() < e.getOffset() || getCaretModel().getOffset() > e.getOffset() + e.getNewLength())) {
       restoreCaretRelativePosition();
     }
   }
@@ -2040,7 +2034,7 @@ public final class EditorImpl extends UserDataHolderBase implements EditorEx, Hi
       dim = mySizeAdjustmentStrategy.adjust(dim, myPreferredSize, this);
       myPreferredSize = dim;
 
-      myGutterComponent.updateSize();
+      updateGutterSize();
 
       myEditorComponent.setSize(dim);
       myEditorComponent.fireResized();
@@ -2161,15 +2155,14 @@ public final class EditorImpl extends UserDataHolderBase implements EditorEx, Hi
       }
     }
 
+    if (isReleased) {
+      g.setColor(getDisposedBackground());
+      g.fillRect(clip.x, clip.y, clip.width, clip.height);
+      return;
+    }
     if (myUpdateCursor) {
       setCursorPosition();
       myUpdateCursor = false;
-    }
-
-    if (isReleased) {
-      g.setColor(new JBColor(new Color(128, 255, 128), new Color(128, 255, 128)));
-      g.fillRect(clip.x, clip.y, clip.width, clip.height);
-      return;
     }
     if (myProject != null && myProject.isDisposed()) return;
 
@@ -2203,6 +2196,10 @@ public final class EditorImpl extends UserDataHolderBase implements EditorEx, Hi
 
       paintComposedTextDecoration(g);
     }
+  }
+
+  Color getDisposedBackground() {
+    return new JBColor(new Color(128, 255, 128), new Color(128, 255, 128));
   }
 
   private static final char IDEOGRAPHIC_SPACE = '\u3000'; // http://www.marathon-studios.com/unicode/U3000/Ideographic_Space
@@ -3819,7 +3816,7 @@ public final class EditorImpl extends UserDataHolderBase implements EditorEx, Hi
   }
 
   public int getPreferredHeight() {
-    if (myUseNewRendering) return myView.getPreferredHeight();
+    if (myUseNewRendering) return isReleased ? 0 : myView.getPreferredHeight();
     if (ourIsUnitTestMode && getUserData(DO_DOCUMENT_UPDATE_TEST) == null) {
       return 1;
     }
@@ -4685,7 +4682,7 @@ public final class EditorImpl extends UserDataHolderBase implements EditorEx, Hi
       if (mySchedulerHandle != null) {
         mySchedulerHandle.cancel(false);
       }
-      mySchedulerHandle = JobScheduler.getScheduler().scheduleWithFixedDelay(this, mySleepTime, mySleepTime, TimeUnit.MILLISECONDS);
+      mySchedulerHandle = EdtExecutorService.getScheduledExecutorInstance().scheduleWithFixedDelay(this, mySleepTime, mySleepTime, TimeUnit.MILLISECONDS);
     }
 
     private void setBlinkPeriod(int blinkPeriod) {
@@ -4716,7 +4713,7 @@ public final class EditorImpl extends UserDataHolderBase implements EditorEx, Hi
           }
 
           if (toRepaint) {
-            SwingUtilities.invokeLater(myRepaintRunnable);
+            activeCursor.repaint();
           }
         }
       }
@@ -5436,11 +5433,13 @@ public final class EditorImpl extends UserDataHolderBase implements EditorEx, Hi
   }
 
   void replaceInputMethodText(@NotNull InputMethodEvent e) {
+    if (isReleased) return;
     getInputMethodRequests();
     myInputMethodRequestsHandler.replaceInputMethodText(e);
   }
 
   void inputMethodCaretPositionChanged(@NotNull InputMethodEvent e) {
+    if (isReleased) return;
     getInputMethodRequests();
     myInputMethodRequestsHandler.setInputMethodCaretPosition(e);
   }
@@ -6342,7 +6341,7 @@ public final class EditorImpl extends UserDataHolderBase implements EditorEx, Hi
     private final Map<ColorKey, Color>                   myOwnColors       = ContainerUtilRt.newHashMap();
     private final EditorColorsScheme myCustomGlobalScheme;
     private Map<EditorFontType, Font> myFontsMap;
-    private int myMaxFontSize = OptionsConstants.MAX_EDITOR_FONT_SIZE;
+    private int myMaxFontSize = EditorFontsConstants.getMaxEditorFontSize();
     private int myFontSize = -1;
     private int myConsoleFontSize = -1;
     private String myFaceName;
@@ -6514,7 +6513,7 @@ public final class EditorImpl extends UserDataHolderBase implements EditorEx, Hi
     public void setDelegate(@NotNull EditorColorsScheme delegate) {
       super.setDelegate(delegate);
       int globalFontSize = getDelegate().getEditorFontSize();
-      myMaxFontSize = Math.max(OptionsConstants.MAX_EDITOR_FONT_SIZE, globalFontSize);
+      myMaxFontSize = Math.max(EditorFontsConstants.getMaxEditorFontSize(), globalFontSize);
       reinitFonts();
       clearSettingsCache();
     }
@@ -7111,6 +7110,27 @@ public final class EditorImpl extends UserDataHolderBase implements EditorEx, Hi
     }
   }
 
+  @TestOnly
+  public void validateState() {
+    myView.validateState();
+
+    if (myDocument.isInBulkUpdate()) return;
+    List<? extends SoftWrap> softWraps = mySoftWrapModel.getRegisteredSoftWraps();
+    int lastSoftWrapOffset = -1;
+    for (SoftWrap wrap : softWraps) {
+      int softWrapOffset = wrap.getStart();
+      LOG.assertTrue(softWrapOffset > lastSoftWrapOffset, "Soft wraps are not ordered");
+      LOG.assertTrue(softWrapOffset < myDocument.getTextLength(), "Soft wrap is after document's end");
+      FoldRegion foldRegion = myFoldingModel.getCollapsedRegionAtOffset(softWrapOffset);
+      LOG.assertTrue(foldRegion == null || foldRegion.getStartOffset() == softWrapOffset, "Soft wrap is inside fold region");
+      LOG.assertTrue(softWrapOffset != DocumentUtil.getLineEndOffset(softWrapOffset, myDocument)
+                     || foldRegion != null, "Soft wrap before line break");
+      LOG.assertTrue(softWrapOffset != DocumentUtil.getLineStartOffset(softWrapOffset, myDocument) ||
+                     myFoldingModel.isOffsetCollapsed(softWrapOffset - 1), "Soft wrap after line break");
+      lastSoftWrapOffset = softWrapOffset;
+    }
+  }
+
   private class MyScrollPane extends JBScrollPane {
     private MyScrollPane() {
       super(0);
@@ -7118,11 +7138,18 @@ public final class EditorImpl extends UserDataHolderBase implements EditorEx, Hi
     }
 
     @Override
+    public void setUI(ScrollPaneUI ui) {
+      super.setUI(ui);
+      // disable standard Swing keybindings
+      setInputMap(WHEN_ANCESTOR_OF_FOCUSED_COMPONENT, null);
+    }
+
+    @Override
     public void layout() {
       if (isInDistractionFreeMode()) {
         // re-calc gutter extra size after editor size is set
         // & layout once again to avoid blinking
-        myGutterComponent.updateSize(true);
+        myGutterComponent.updateSize(true, true);
       }
       super.layout();
     }

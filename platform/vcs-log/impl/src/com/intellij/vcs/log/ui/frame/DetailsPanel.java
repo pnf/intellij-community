@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2014 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,6 +26,7 @@ import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.Comparing;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.openapi.vcs.changes.issueLinks.IssueLinkHtmlRenderer;
+import com.intellij.openapi.vcs.ui.FontUtil;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.ui.BrowserHyperlinkListener;
 import com.intellij.ui.IdeBorderFactory;
@@ -36,6 +37,7 @@ import com.intellij.ui.components.panels.NonOpaquePanel;
 import com.intellij.util.NotNullProducer;
 import com.intellij.util.containers.ContainerUtil;
 import com.intellij.util.text.DateFormatUtil;
+import com.intellij.util.ui.JBUI;
 import com.intellij.util.ui.UIUtil;
 import com.intellij.vcs.log.Hash;
 import com.intellij.vcs.log.VcsFullCommitDetails;
@@ -46,6 +48,7 @@ import com.intellij.vcs.log.data.VisiblePack;
 import com.intellij.vcs.log.ui.VcsLogColorManager;
 import com.intellij.vcs.log.ui.render.VcsRefPainter;
 import com.intellij.vcs.log.ui.tables.GraphTableModel;
+import com.intellij.vcs.log.util.VcsUserUtil;
 import net.miginfocom.swing.MigLayout;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -96,7 +99,8 @@ class DetailsPanel extends JPanel implements ListSelectionListener {
   DetailsPanel(@NotNull VcsLogDataManager logDataManager,
                @NotNull VcsLogGraphTable graphTable,
                @NotNull VcsLogColorManager colorManager,
-               @NotNull VisiblePack initialDataPack) {
+               @NotNull VisiblePack initialDataPack,
+               @NotNull Disposable parent) {
     myLogDataManager = logDataManager;
     myGraphTable = graphTable;
     myColorManager = colorManager;
@@ -127,7 +131,7 @@ class DetailsPanel extends JPanel implements ListSelectionListener {
     myMainContentPanel.add(myReferencesPanel, "");
     myMainContentPanel.add(myCommitDetailsPanel, "");
 
-    myLoadingPanel = new JBLoadingPanel(new BorderLayout(), logDataManager, ProgressWindow.DEFAULT_PROGRESS_DIALOG_POSTPONE_TIME_MILLIS) {
+    myLoadingPanel = new JBLoadingPanel(new BorderLayout(), parent, ProgressWindow.DEFAULT_PROGRESS_DIALOG_POSTPONE_TIME_MILLIS) {
       @Override
       public Color getBackground() {
         return getDetailsBackground();
@@ -178,7 +182,7 @@ class DetailsPanel extends JPanel implements ListSelectionListener {
     else {
       ((CardLayout)getLayout()).show(this, STANDARD_LAYER);
       int row = rows[0];
-      GraphTableModel tableModel = (GraphTableModel)myGraphTable.getModel();
+      GraphTableModel tableModel = myGraphTable.getModel();
       VcsFullCommitDetails commitData = tableModel.getFullDetails(row);
       if (commitData instanceof LoadingDetails) {
         myLoadingPanel.startLoading();
@@ -209,7 +213,7 @@ class DetailsPanel extends JPanel implements ListSelectionListener {
 
   private void updateDetailsBorder(@Nullable VcsFullCommitDetails data) {
     if (data == null || !myColorManager.isMultipleRoots()) {
-      myMainContentPanel.setBorder(BorderFactory.createEmptyBorder(VcsLogGraphTable.ROOT_INDICATOR_WHITE_WIDTH / 2,
+      myMainContentPanel.setBorder(JBUI.Borders.empty(VcsLogGraphTable.ROOT_INDICATOR_WHITE_WIDTH / 2,
                                                                    VcsLogGraphTable.ROOT_INDICATOR_WHITE_WIDTH / 2, 0, 0));
     }
     else {
@@ -287,12 +291,27 @@ class DetailsPanel extends JPanel implements ListSelectionListener {
         myMainText = null;
       }
       else {
-        String header = commit.getId().toShortString() + " " + getAuthorText(commit) +
-                        (myMultiRoot ? " [" + commit.getRoot().getName() + "]" : "");
+        String header = getHtmlWithFonts(commit.getId().toShortString() + " " + getAuthorText(commit) +
+                                         (myMultiRoot ? " [" + commit.getRoot().getName() + "]" : ""));
         String body = getMessageText(commit);
         myMainText = header + "<br/>" + body;
       }
       update();
+    }
+
+    @NotNull
+    private static String getHtmlWithFonts(@NotNull String input) {
+      return getHtmlWithFonts(input, getBaseFont().getStyle());
+    }
+
+    @NotNull
+    private static String getHtmlWithFonts(@NotNull String input, int style) {
+      return FontUtil.getHtmlWithFonts(input, style, getBaseFont());
+    }
+
+    @NotNull
+    private static Font getBaseFont() {
+      return EditorColorsManager.getInstance().getGlobalScheme().getFont(EditorFontType.PLAIN);
     }
 
     void setBranches(@Nullable List<String> branches) {
@@ -312,7 +331,7 @@ class DetailsPanel extends JPanel implements ListSelectionListener {
       }
       else {
         setText("<html><head>" +
-                UIUtil.getCssFontDeclaration(EditorColorsManager.getInstance().getGlobalScheme().getFont(EditorFontType.PLAIN)) +
+                UIUtil.getCssFontDeclaration(getBaseFont()) +
                 "</head><body>" +
                 myMainText +
                 "<br/>" +
@@ -336,7 +355,7 @@ class DetailsPanel extends JPanel implements ListSelectionListener {
         int[] means = new int[BRANCHES_TABLE_COLUMN_COUNT - 1];
         int[] max = new int[BRANCHES_TABLE_COLUMN_COUNT - 1];
 
-        for (int i = 0; i < rowCount; i++){
+        for (int i = 0; i < rowCount; i++) {
           for (int j = 0; j < BRANCHES_TABLE_COLUMN_COUNT - 1; j++) {
             int index = rowCount * j + i;
             if (index < myBranches.size()) {
@@ -406,16 +425,18 @@ class DetailsPanel extends JPanel implements ListSelectionListener {
       return size;
     }
 
-    private String getMessageText(VcsFullCommitDetails commit) {
+    @NotNull
+    private String getMessageText(@NotNull VcsFullCommitDetails commit) {
       String fullMessage = commit.getFullMessage();
       int separator = fullMessage.indexOf("\n\n");
       String subject = separator > 0 ? fullMessage.substring(0, separator) : fullMessage;
       String description = fullMessage.substring(subject.length());
-      return "<b>" + escapeMultipleSpaces(IssueLinkHtmlRenderer.formatTextWithLinks(myProject, subject)) + "</b>" +
-             escapeMultipleSpaces(IssueLinkHtmlRenderer.formatTextWithLinks(myProject, description));
+      return "<b>" + getHtmlWithFonts(escapeMultipleSpaces(IssueLinkHtmlRenderer.formatTextWithLinks(myProject, subject)), Font.BOLD) + "</b>" +
+             getHtmlWithFonts(escapeMultipleSpaces(IssueLinkHtmlRenderer.formatTextWithLinks(myProject, description)));
     }
 
-    private String escapeMultipleSpaces(String text) {
+    @NotNull
+    private String escapeMultipleSpaces(@NotNull String text) {
       StringBuilder result = new StringBuilder();
       for (int i = 0; i < text.length(); i++) {
         if (text.charAt(i) == ' ') {
@@ -433,12 +454,13 @@ class DetailsPanel extends JPanel implements ListSelectionListener {
       return result.toString();
     }
 
-    private static String getAuthorText(VcsFullCommitDetails commit) {
+    @NotNull
+    private static String getAuthorText(@NotNull VcsFullCommitDetails commit) {
       long authorTime = commit.getAuthorTime();
       long commitTime = commit.getCommitTime();
 
-      String authorText = commit.getAuthor().getName() + formatDateTime(authorTime);
-      if (!commit.getAuthor().equals(commit.getCommitter())) {
+      String authorText = VcsUserUtil.getShortPresentation(commit.getAuthor()) + formatDateTime(authorTime);
+      if (!VcsUserUtil.isSamePerson(commit.getAuthor(), commit.getCommitter())) {
         String commitTimeText;
         if (authorTime != commitTime) {
           commitTimeText = formatDateTime(commitTime);
@@ -446,7 +468,7 @@ class DetailsPanel extends JPanel implements ListSelectionListener {
         else {
           commitTimeText = "";
         }
-        authorText += " (committed by " + commit.getCommitter().getName() + commitTimeText + ")";
+        authorText += " (committed by " + VcsUserUtil.getShortPresentation(commit.getCommitter()) + commitTimeText + ")";
       }
       else if (authorTime != commitTime) {
         authorText += " (committed " + formatDateTime(commitTime) + ")";
@@ -542,8 +564,7 @@ class DetailsPanel extends JPanel implements ListSelectionListener {
   }
 
   private static class MessagePanel extends NonOpaquePanel {
-
-    private final JLabel myLabel;
+    @NotNull private final JLabel myLabel;
 
     MessagePanel() {
       super(new BorderLayout());

@@ -65,10 +65,12 @@ public class JBScrollPane extends JScrollPane {
   public static final RegionPainter<Float> THUMB_DARK_PAINTER = new ThumbPainter(.35f, .25f, Gray.x80, Gray.x94);
 
   @Deprecated
-  public static final RegionPainter<Float> MAC_THUMB_PAINTER = new RoundThumbPainter(2, .5f, .4f, Gray.x99);
+  public static final RegionPainter<Float> MAC_THUMB_PAINTER = new RoundThumbPainter(2, .2f, .3f, Gray.x00);
+  static final RegionPainter<Float> MAC_OVERLAY_THUMB_PAINTER = new RoundThumbPainter(2, 0f, .5f, Gray.x00);
 
   @Deprecated
-  public static final RegionPainter<Float> MAC_THUMB_DARK_PAINTER = new RoundThumbPainter(2, .15f, .25f, Gray.x80);
+  public static final RegionPainter<Float> MAC_THUMB_DARK_PAINTER = new RoundThumbPainter(2, .10f, .05f, Gray.xFF);
+  static final RegionPainter<Float> MAC_OVERLAY_THUMB_DARK_PAINTER = new RoundThumbPainter(2, 0f, .15f, Gray.xFF);
 
   private int myViewportBorderWidth = -1;
   private boolean myHasOverlayScrollbars;
@@ -328,7 +330,7 @@ public class JBScrollPane extends JScrollPane {
     public void updateUI() {
       ScrollBarUI ui = getUI();
       if (ui instanceof DefaultScrollBarUI) return;
-      setUI(DefaultScrollBarUI.createUI(this));
+      setUI(JBScrollBar.createUI(this));
     }
 
     @Override
@@ -352,6 +354,12 @@ public class JBScrollPane extends JScrollPane {
           return true;
         }
       }
+      else if (ui instanceof DefaultScrollBarUI) {
+        DefaultScrollBarUI dui = (DefaultScrollBarUI)ui;
+        Point point = e.getLocationOnScreen();
+        SwingUtilities.convertPointFromScreen(point, bar);
+        return !dui.isThumbContains(point.x, point.y);
+      }
     }
     return true;
   }
@@ -361,14 +369,17 @@ public class JBScrollPane extends JScrollPane {
 
     public Corner(String pos) {
       myPos = pos;
+      ScrollColorProducer.setBackground(this);
+      ScrollColorProducer.setForeground(this);
     }
 
     @Override
     protected void paintComponent(Graphics g) {
-      g.setColor(ButtonlessScrollBarUI.getTrackBackgroundDefault());
+      g.setColor(getBackground());
       g.fillRect(0, 0, getWidth(), getHeight());
 
-      g.setColor(ButtonlessScrollBarUI.getTrackBorderColorDefault());
+      if (SystemInfo.isMac || !Registry.is("ide.scroll.track.border.paint")) return;
+      g.setColor(getForeground());
 
       int x2 = getWidth() - 1;
       int y2 = getHeight() - 1;
@@ -735,7 +746,7 @@ public class JBScrollPane extends JScrollPane {
     }
 
     private void adjustForVSB(Rectangle bounds, Insets insets, Rectangle vsbBounds, boolean vsbOpaque, boolean vsbOnLeft) {
-      vsbBounds.width = min(bounds.width, vsb.getPreferredSize().width);
+      vsbBounds.width = !vsb.isEnabled() ? 0 : min(bounds.width, vsb.getPreferredSize().width);
       if (vsbOnLeft) {
         vsbBounds.x = bounds.x - insets.left/* + vsbBounds.width*/;
         if (vsbOpaque) bounds.x += vsbBounds.width;
@@ -747,7 +758,7 @@ public class JBScrollPane extends JScrollPane {
     }
 
     private void adjustForHSB(Rectangle bounds, Insets insets, Rectangle hsbBounds, boolean hsbOpaque, boolean hsbOnTop) {
-      hsbBounds.height = min(bounds.height, hsb.getPreferredSize().height);
+      hsbBounds.height = !hsb.isEnabled() ? 0 : min(bounds.height, hsb.getPreferredSize().height);
       if (hsbOnTop) {
         hsbBounds.y = bounds.y - insets.top/* + hsbBounds.height*/;
         if (hsbOpaque) bounds.y += hsbBounds.height;

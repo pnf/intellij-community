@@ -27,8 +27,8 @@ import com.intellij.openapi.command.CommandProcessor;
 import com.intellij.openapi.command.WriteCommandAction;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.editor.Document;
-import com.intellij.openapi.fileEditor.FileDocumentManager;
-import com.intellij.openapi.fileEditor.OpenFileDescriptor;
+import com.intellij.openapi.editor.Editor;
+import com.intellij.openapi.fileEditor.*;
 import com.intellij.openapi.progress.ProcessCanceledException;
 import com.intellij.openapi.progress.ProgressIndicator;
 import com.intellij.openapi.progress.ProgressManager;
@@ -55,7 +55,8 @@ import com.intellij.openapi.vcs.changes.issueLinks.IssueLinkHtmlRenderer;
 import com.intellij.openapi.vcs.changes.issueLinks.IssueLinkRenderer;
 import com.intellij.openapi.vcs.changes.issueLinks.TableLinkMouseListener;
 import com.intellij.openapi.vcs.impl.AbstractVcsHelperImpl;
-import com.intellij.openapi.vcs.ui.ReplaceFileConfirmationDialog;
+import com.intellij.openapi.vcs.ui.*;
+import com.intellij.openapi.vcs.ui.FontUtil;
 import com.intellij.openapi.vcs.versionBrowser.CommittedChangeList;
 import com.intellij.openapi.vcs.vfs.VcsFileSystem;
 import com.intellij.openapi.vcs.vfs.VcsVirtualFile;
@@ -77,7 +78,10 @@ import org.jetbrains.annotations.Nullable;
 import javax.swing.*;
 import javax.swing.event.ListSelectionEvent;
 import javax.swing.event.ListSelectionListener;
-import javax.swing.table.*;
+import javax.swing.table.TableCellEditor;
+import javax.swing.table.TableCellRenderer;
+import javax.swing.table.TableColumn;
+import javax.swing.table.TableModel;
 import javax.swing.tree.DefaultMutableTreeNode;
 import javax.swing.tree.TreeCellRenderer;
 import javax.swing.tree.TreePath;
@@ -88,7 +92,6 @@ import java.awt.datatransfer.Transferable;
 import java.awt.event.InputEvent;
 import java.beans.PropertyChangeEvent;
 import java.beans.PropertyChangeListener;
-import java.io.File;
 import java.io.IOException;
 import java.util.*;
 import java.util.List;
@@ -108,7 +111,6 @@ public class FileHistoryPanelImpl extends PanelWithActionsAndCloseButton {
 
   private final AbstractVcs myVcs;
   private final VcsHistoryProvider myProvider;
-  private final AnnotationProvider myAnnotationProvider;
   private VcsHistorySession myHistorySession;
   @NotNull private final FilePath myFilePath;
   @Nullable private final VcsRevisionNumber myStartingRevision;
@@ -208,7 +210,7 @@ public class FileHistoryPanelImpl extends PanelWithActionsAndCloseButton {
     return myStartingRevision;
   }
 
-  private static class AuthorCellRenderer extends DefaultTableCellRenderer {
+  private static class AuthorCellRenderer extends ColoredTableCellRenderer {
     private String myTooltipText;
 
     public void setTooltipText(final String text) {
@@ -216,20 +218,17 @@ public class FileHistoryPanelImpl extends PanelWithActionsAndCloseButton {
     }
 
     @Override
-    public Component getTableCellRendererComponent(JTable table, Object value, boolean isSelected, boolean hasFocus, int row, int column) {
-      final Component c = super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column);
-      if (c instanceof JComponent) {
-        ((JComponent)c).setToolTipText(myTooltipText);
+    protected void customizeCellRenderer(JTable table, @Nullable Object value, boolean selected, boolean hasFocus, int row, int column) {
+      setToolTipText(myTooltipText);
+      if (selected || hasFocus) {
+        setBackground(table.getSelectionBackground());
+        setForeground(table.getSelectionForeground());
       }
-      if (isSelected || hasFocus) {
-        c.setBackground(table.getSelectionBackground());
-        c.setForeground(table.getSelectionForeground());
-      } else {
-        c.setBackground(table.getBackground());
-        c.setForeground(table.getForeground());
+      else {
+        setBackground(table.getBackground());
+        setForeground(table.getForeground());
       }
-
-      return c;
+      if (value != null) append(value.toString());
     }
   }
 
@@ -356,7 +355,6 @@ public class FileHistoryPanelImpl extends PanelWithActionsAndCloseButton {
     myIsStaticAndEmbedded = false;
     myVcs = vcs;
     myProvider = provider;
-    myAnnotationProvider = myVcs.getCachingAnnotationProvider();
     myRefresherI = refresherI;
     myHistorySession = session;
     myFilePath = filePath;
@@ -663,7 +661,12 @@ public class FileHistoryPanelImpl extends PanelWithActionsAndCloseButton {
       if (revision != null) {
         final String message = revision.getCommitMessage();
         myOriginalComment = message;
-        @NonNls final String text = IssueLinkHtmlRenderer.formatTextIntoHtml(myVcs.getProject(), message);
+        @NonNls final String text = message == null ? "" : "<html><head>" +
+                                                           UIUtil.getCssFontDeclaration(UIUtil.getLabelFont()) +
+                                                           "</head><body>" +
+                                                           FontUtil.getHtmlWithFonts(IssueLinkHtmlRenderer
+                                                             .formatTextWithLinks(myVcs.getProject(), message)) +
+                                                           "</body></html>";
         myComments.setText(text);
         myComments.setCaretPosition(0);
       }
@@ -1016,11 +1019,7 @@ public class FileHistoryPanelImpl extends PanelWithActionsAndCloseButton {
     }
 
     private String createGetActionTitle(final VcsFileRevision revision) {
-      return VcsBundle.message("action.name.for.file.get.version", getIOFile().getAbsolutePath(), revision.getRevisionNumber());
-    }
-
-    private File getIOFile() {
-      return myFilePath.getIOFile();
+      return VcsBundle.message("action.name.for.file.get.version", myFilePath.getPath(), revision.getRevisionNumber());
     }
 
     private void write(byte[] revision) throws IOException {
@@ -1043,7 +1042,7 @@ public class FileHistoryPanelImpl extends PanelWithActionsAndCloseButton {
     }
 
     private void writeContentToIOFile(byte[] revisionContent) throws IOException {
-      FileUtil.writeToFile(getIOFile(), revisionContent);
+      FileUtil.writeToFile(myFilePath.getIOFile(), revisionContent);
     }
 
     private void writeContentToDocument(final Document document, byte[] revisionContent) throws IOException {
@@ -1062,6 +1061,25 @@ public class FileHistoryPanelImpl extends PanelWithActionsAndCloseButton {
     public MyAnnotateAction() {
       super(VcsBundle.message("annotate.action.name"), VcsBundle.message("annotate.action.description"), AllIcons.Actions.Annotate);
       setShortcutSet(ActionManager.getInstance().getAction("Annotate").getShortcutSet());
+    }
+
+    @Nullable
+    @Override
+    protected Editor getEditor(@NotNull AnActionEvent e) {
+      VirtualFile virtualFile = getVirtualFile();
+      if (virtualFile == null) return null;
+
+      Editor editor = e.getData(CommonDataKeys.EDITOR);
+      if (editor != null) {
+        VirtualFile editorFile = FileDocumentManager.getInstance().getFile(editor.getDocument());
+        if (Comparing.equal(editorFile, virtualFile)) return editor;
+      }
+
+      FileEditor fileEditor = FileEditorManager.getInstance(myProject).getSelectedEditor(virtualFile);
+      if (fileEditor instanceof TextEditor) {
+        return ((TextEditor)fileEditor).getEditor();
+      }
+      return null;
     }
 
     @Nullable
